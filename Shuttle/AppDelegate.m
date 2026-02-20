@@ -679,7 +679,14 @@
             [item setEnabled:NO];
         } else {
             NSArray *sorted = [combined sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-                return [a[@"hostname"] compare:b[@"hostname"] options:NSCaseInsensitiveSearch];
+                NSString *ipA = a[@"ip"], *ipB = b[@"ip"];
+                // Entries with no IP (Bonjour-only) sort to the end
+                if (!ipA.length && !ipB.length) return NSOrderedSame;
+                if (!ipA.length) return NSOrderedDescending;
+                if (!ipB.length) return NSOrderedAscending;
+                NSInteger lastA = [[[ipA componentsSeparatedByString:@"."] lastObject] integerValue];
+                NSInteger lastB = [[[ipB componentsSeparatedByString:@"."] lastObject] integerValue];
+                return lastA < lastB ? NSOrderedAscending : lastA > lastB ? NSOrderedDescending : NSOrderedSame;
             }];
             for (NSDictionary *host in sorted) {
                 NSString *hostname = host[@"hostname"];
@@ -778,9 +785,20 @@
         [task setArguments:@[@"-e", [NSString stringWithFormat:
             @"tell application \"iTerm\" to create window with default profile command \"%@\"", sshCmd]]];
     } else {
+        // Activate Terminal first so its startup window exists, then run in that
+        // window — prevents a second window from appearing when Terminal wasn't open.
+        NSString *script = [NSString stringWithFormat:
+            @"tell application \"Terminal\"\n"
+            @"    activate\n"
+            @"    if (count windows) = 0 then\n"
+            @"        do script \"%@\"\n"
+            @"    else\n"
+            @"        do script \"%@\" in front window\n"
+            @"    end if\n"
+            @"end tell",
+            sshCmd, sshCmd];
         [task setLaunchPath:@"/usr/bin/osascript"];
-        [task setArguments:@[@"-e", [NSString stringWithFormat:
-            @"tell application \"Terminal\" to do script \"%@\"", sshCmd]]];
+        [task setArguments:@[@"-e", script]];
     }
 
     NSError *error = nil;
