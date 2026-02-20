@@ -442,9 +442,12 @@
 
         NSMenu *subMenu = [[NSMenu alloc] init];
         for (NSDictionary *server in catServers) {
-            NSString *name = server[@"name"] ?: server[@"hostname"] ?: @"Unnamed";
-            NSString *cmd  = [self sshCommandForServer:server];
-            NSString *rep  = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, name];
+            NSString *name         = server[@"name"] ?: server[@"hostname"] ?: @"Unnamed";
+            NSString *cmd          = [self sshCommandForServer:server];
+            NSString *termOverride = server[@"terminal"] ?: @"";
+            // Format: cmd¬_¬theme¬_¬title¬_¬window¬_¬name¬_¬terminalOverride
+            NSString *rep = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@¬_¬%@",
+                             cmd, name, termOverride];
             NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:name action:@selector(openHost:) keyEquivalent:@""];
             [item setRepresentedObject:rep];
             [subMenu addItem:item];
@@ -849,8 +852,11 @@
         return;
     }
 
-    // Resolve terminal preference; default to "terminal" (native Terminal.app)
-    NSString *terminal = ([terminalPref length] > 0) ? terminalPref : @"terminal";
+    // Per-server terminal override (field 5) takes precedence over global pref
+    NSString *termOverride = (objectsFromJSON.count > 5) ? objectsFromJSON[5] : @"";
+    NSString *terminal = (termOverride.length > 0 && ![termOverride isEqualToString:@"(null)"])
+                         ? termOverride
+                         : (terminalPref.length > 0 ? terminalPref : @"terminal");
 
     NSTask *task = [[NSTask alloc] init];
 
