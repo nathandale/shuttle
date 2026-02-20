@@ -498,7 +498,7 @@
     NSInteger port = [server[@"port"] integerValue];
     NSString *user = server[@"user"];
     NSString *host = server[@"hostname"];
-    if (key.length > 0)          [cmd appendFormat:@" -i %@", key];
+    if (key.length > 0)          [cmd appendFormat:@" -i %@", [key stringByExpandingTildeInPath]];
     if (port > 0 && port != 22)  [cmd appendFormat:@" -p %ld", (long)port];
     if (user.length > 0)         [cmd appendFormat:@" %@@%@", user, host];
     else                         [cmd appendFormat:@" %@", host];
@@ -914,34 +914,50 @@
         [task setLaunchPath:@"/usr/bin/osascript"];
         [task setArguments:@[@"-e", script]];
 
+    } else if ([terminal isEqualToString:@"warp"]) {
+        // Warp uses a URL scheme rather than CLI args
+        NSString *encoded = [sshCmd stringByAddingPercentEncodingWithAllowedCharacters:
+                             [NSCharacterSet URLQueryAllowedCharacterSet]];
+        NSURL *url = [NSURL URLWithString:
+                      [NSString stringWithFormat:@"warp://action/new_tab?command=%@", encoded]];
+        [[NSWorkspace sharedWorkspace] openURL:url];
+        return;
+
     } else {
-        // For all other terminals, find the binary via Launch Services and
-        // pass the command with -e (works for Ghostty, Alacritty, kitty, etc.)
+        // Ghostty, Alacritty, kitty, Hyper, Rio, etc.
+        // Use NSWorkspace to open the app — avoids the "App Management" privacy
+        // prompt that NSTask triggers when accessing another app's internal binary.
+        // Wrap command in sh -c so the shell handles any remaining expansion.
         NSDictionary *bundleMap = @{
             @"ghostty":   @"com.mitchellh.ghostty",
             @"alacritty": @"io.alacritty",
             @"kitty":     @"net.kovidgoyal.kitty",
-            @"warp":      @"dev.warp.Warp-Stable",
             @"hyper":     @"co.zeit.hyper",
             @"rio":       @"com.raphaelamorim.rio",
         };
         NSString *bundleID = bundleMap[terminal];
-        NSString *binary   = bundleID ? [self executableForBundleID:bundleID] : nil;
+        NSURL *appURL = bundleID
+            ? [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundleID]
+            : nil;
 
-        if (binary) {
-            [task setLaunchPath:binary];
-            // Warp uses a URL scheme; others accept -e <cmd>
-            if ([terminal isEqualToString:@"warp"]) {
-                NSString *encoded = [sshCmd stringByAddingPercentEncodingWithAllowedCharacters:
-                                     [NSCharacterSet URLQueryAllowedCharacterSet]];
-                NSURL *url = [NSURL URLWithString:
-                              [NSString stringWithFormat:@"warp://action/new_tab?command=%@", encoded]];
-                [[NSWorkspace sharedWorkspace] openURL:url];
-                return;
-            }
-            [task setArguments:@[@"-e", sshCmd]];
+        if (appURL) {
+            NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
+            config.arguments = @[@"-e", @"sh", @"-c", sshCmd];
+            [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
+                                                  configuration:config
+                                              completionHandler:^(NSRunningApplication *app, NSError *err) {
+                if (err) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, err.localizedDescription]
+                          additionalInfo:@"Check that the terminal app is installed."
+                      continueOnErrorOption:NO];
+                    });
+                }
+            }];
+            return; // completionHandler handles errors async
         } else {
-            // Unknown or not found — fall back to Terminal.app
+            // Unknown terminal — fall back to Terminal.app
+            [task setLaunchPath:@"/usr/bin/osascript"];
             NSString *script = [NSString stringWithFormat:
                 @"tell application \"Terminal\"\n"
                 @"    activate\n"
@@ -952,7 +968,6 @@
                 @"    end if\n"
                 @"end tell",
                 sshCmd, sshCmd];
-            [task setLaunchPath:@"/usr/bin/osascript"];
             [task setArguments:@[@"-e", script]];
         }
     }
