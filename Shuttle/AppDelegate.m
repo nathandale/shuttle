@@ -12,6 +12,11 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <fcntl.h>
+#include <netdb.h>
+
+@interface AppDelegate () <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
+@property (nonatomic, strong) NSMutableArray *pendingServices; // NSNetService objects awaiting resolution
+@end
 
 @implementation AppDelegate
 
@@ -534,11 +539,36 @@
     return open;
 }
 
+// Reverse-DNS lookup. Returns hostname string or nil if unresolvable. Safe to call off main thread.
+- (NSString *)reverseResolve:(NSString *)ip {
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    if (inet_pton(AF_INET, [ip UTF8String], &sa.sin_addr) <= 0) return nil;
+    char host[NI_MAXHOST];
+    if (getnameinfo((struct sockaddr *)&sa, sizeof(sa), host, sizeof(host),
+                    NULL, 0, NI_NAMEREQD) != 0) return nil;
+    NSString *resolved = [NSString stringWithUTF8String:host];
+    // Strip trailing dot if present (DNS FQDN artefact)
+    if ([resolved hasSuffix:@"."]) resolved = [resolved substringToIndex:resolved.length - 1];
+    return resolved;
+}
+
 - (void)scanLAN {
     if (isLanScanning) return;
     isLanScanning = YES;
+    lanHosts = [NSMutableArray array];
+    bonjourHosts = [NSMutableArray array];
     [self rebuildLanSubmenu];
 
+    // ---- Bonjour / mDNS: find _ssh._tcp. services on local. ----
+    [sshBrowser stop];
+    self.pendingServices = [NSMutableArray array];
+    sshBrowser = [[NSNetServiceBrowser alloc] init];
+    sshBrowser.delegate = self;
+    [sshBrowser searchForServicesOfType:@"_ssh._tcp." inDomain:@"local."];
+
+    // ---- Port-22 sweep with reverse-DNS ----
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *localIP = [self localIPAddress];
         if (!localIP) {
@@ -558,7 +588,9 @@
             dispatch_group_async(group, q, ^{
                 dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
                 if ([self isPort22OpenAt:ip]) {
-                    @synchronized(lock) { [found addObject:ip]; }
+                    NSString *hostname = [self reverseResolve:ip] ?: ip;
+                    NSDictionary *entry = @{@"ip": ip, @"hostname": hostname};
+                    @synchronized(lock) { [found addObject:entry]; }
                 }
                 dispatch_semaphore_signal(sem);
             });
@@ -573,6 +605,47 @@
     });
 }
 
+// MARK: - NSNetServiceBrowser delegate
+
+- (void)netServiceBrowser:(NSNetServiceBrowser *)browser
+           didFindService:(NSNetService *)service
+               moreComing:(BOOL)moreComing {
+    service.delegate = self;
+    [self.pendingServices addObject:service]; // retain during resolution
+    [service resolveWithTimeout:5.0];
+}
+
+- (void)netServiceDidResolveAddress:(NSNetService *)service {
+    NSString *host = service.hostName ?: service.name;
+    // Strip trailing dot
+    if ([host hasSuffix:@"."]) host = [host substringToIndex:host.length - 1];
+
+    // Try to extract an IPv4 address from the resolved addresses
+    NSString *resolvedIP = @"";
+    for (NSData *addrData in service.addresses) {
+        const struct sockaddr *sa = (const struct sockaddr *)addrData.bytes;
+        if (sa->sa_family == AF_INET) {
+            char buf[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &((const struct sockaddr_in *)sa)->sin_addr, buf, sizeof(buf));
+            resolvedIP = [NSString stringWithUTF8String:buf];
+            break;
+        }
+    }
+
+    NSDictionary *entry = @{@"hostname": host, @"ip": resolvedIP};
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [bonjourHosts addObject:entry];
+        [self.pendingServices removeObject:service];
+        [self rebuildLanSubmenu];
+    });
+}
+
+- (void)netService:(NSNetService *)service didNotResolve:(NSDictionary *)errorDict {
+    [self.pendingServices removeObject:service];
+}
+
+// MARK: - Build LAN submenu
+
 - (void)rebuildLanSubmenu {
     if (!lanSubMenu) return;
     [lanSubMenu removeAllItems];
@@ -580,18 +653,48 @@
     if (isLanScanning) {
         NSMenuItem *item = [lanSubMenu addItemWithTitle:@"Scanning..." action:nil keyEquivalent:@""];
         [item setEnabled:NO];
-    } else if (!lanHosts || lanHosts.count == 0) {
-        NSMenuItem *item = [lanSubMenu addItemWithTitle:@"No SSH hosts found" action:nil keyEquivalent:@""];
-        [item setEnabled:NO];
     } else {
-        NSArray *sorted = [lanHosts sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
-            return [a compare:b options:NSNumericSearch];
-        }];
-        for (NSString *ip in sorted) {
-            NSString *cmd = [NSString stringWithFormat:@"ssh %@", ip];
-            NSString *repObj = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, ip];
-            NSMenuItem *item = [lanSubMenu addItemWithTitle:ip action:@selector(openHost:) keyEquivalent:@""];
-            [item setRepresentedObject:repObj];
+        // Merge IP-scan results and Bonjour results, deduplicating by hostname.
+        // Bonjour names are preferred (they're the canonical mDNS name).
+        NSMutableArray *combined = [NSMutableArray array];
+        NSMutableSet *seenHostnames = [NSMutableSet set];
+
+        for (NSDictionary *h in bonjourHosts) {
+            NSString *hn = h[@"hostname"];
+            if (hn.length > 0 && ![seenHostnames containsObject:hn]) {
+                [combined addObject:h];
+                [seenHostnames addObject:hn];
+            }
+        }
+        for (NSDictionary *h in lanHosts) {
+            NSString *hn = h[@"hostname"];
+            if (hn.length > 0 && ![seenHostnames containsObject:hn]) {
+                [combined addObject:h];
+                [seenHostnames addObject:hn];
+            }
+        }
+
+        if (combined.count == 0) {
+            NSMenuItem *item = [lanSubMenu addItemWithTitle:@"No SSH hosts found" action:nil keyEquivalent:@""];
+            [item setEnabled:NO];
+        } else {
+            NSArray *sorted = [combined sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+                return [a[@"hostname"] compare:b[@"hostname"] options:NSCaseInsensitiveSearch];
+            }];
+            for (NSDictionary *host in sorted) {
+                NSString *hostname = host[@"hostname"];
+                NSString *ip       = host[@"ip"];
+                // SSH target: prefer hostname (works for .local and FQDN), fall back to IP
+                NSString *sshTarget = (hostname.length > 0) ? hostname : ip;
+                // Menu label: "hostname (ip)" when we have both and they differ, else just the target
+                NSString *label = sshTarget;
+                if (ip.length > 0 && ![hostname isEqualToString:ip])
+                    label = [NSString stringWithFormat:@"%@ (%@)", hostname, ip];
+                NSString *cmd    = [NSString stringWithFormat:@"ssh %@", sshTarget];
+                NSString *repObj = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, label];
+                NSMenuItem *item = [lanSubMenu addItemWithTitle:label action:@selector(openHost:) keyEquivalent:@""];
+                [item setRepresentedObject:repObj];
+            }
         }
     }
 
@@ -690,22 +793,24 @@
 }
 
 - (IBAction)showImportPanel:(id)sender {
-    NSOpenPanel * openPanelObj	= [NSOpenPanel openPanel];
-    NSInteger tvarNSInteger	= [openPanelObj runModal];
-    if(tvarNSInteger == NSOKButton){
-        //Backup the current configuration
-        [[NSFileManager defaultManager] moveItemAtPath:shuttleConfigFile toPath: [NSHomeDirectory() stringByAppendingPathComponent:@".shuttle.json.backup"] error: nil];
-        
-        NSURL * selectedFileUrl = [openPanelObj URL];
-        //Import the selected file
-        //NSLog(@"copy filename from %@ to %@",selectedFileUrl.path,shuttleConfigFile);
-        [[NSFileManager defaultManager] copyItemAtPath:selectedFileUrl.path toPath:shuttleConfigFile error:nil];
-        //Delete the old configuration file
-        [[NSFileManager defaultManager] removeItemAtPath:[NSHomeDirectory() stringByAppendingPathComponent:@".shuttle.json.backup"]  error: nil];
-    } else {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setAllowedFileTypes:@[@"json"]];
+    if ([panel runModal] != NSModalResponseOK) return;
+
+    NSString *backup = [shuttleConfigFile stringByAppendingString:@".backup"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm removeItemAtPath:backup error:nil];                          // clear any stale backup
+    [fm copyItemAtPath:shuttleConfigFile toPath:backup error:nil];   // back up current config
+    [fm removeItemAtPath:shuttleConfigFile error:nil];
+    NSError *copyErr = nil;
+    [fm copyItemAtPath:panel.URL.path toPath:shuttleConfigFile error:&copyErr];
+    if (copyErr) {
+        // Restore backup on failure
+        [fm copyItemAtPath:backup toPath:shuttleConfigFile error:nil];
+        [self throwError:@"Import failed" additionalInfo:copyErr.localizedDescription continueOnErrorOption:YES];
         return;
     }
-    
+    [self loadMenu];
 }
 
 -(void) throwError:(NSString*)errorMessage additionalInfo:(NSString*)errorInfo continueOnErrorOption:(BOOL)continueOption {
@@ -728,14 +833,17 @@
 }
 
 - (IBAction)showExportPanel:(id)sender {
-    NSSavePanel * savePanelObj	= [NSSavePanel savePanel];
-    //Display the Save Panel
-    NSInteger result	= [savePanelObj runModal];
-    if (result == NSFileHandlingPanelOKButton) {
-        NSURL *saveURL = [savePanelObj URL];
-        // then copy a previous file to the new location
-        [[NSFileManager defaultManager] copyItemAtPath:shuttleConfigFile toPath:saveURL.path error:nil];
-    }
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    [panel setAllowedFileTypes:@[@"json"]];
+    [panel setNameFieldStringValue:@"shuttle.json"];
+    if ([panel runModal] != NSModalResponseOK) return;
+
+    NSString *dest = panel.URL.path;
+    [[NSFileManager defaultManager] removeItemAtPath:dest error:nil]; // overwrite if exists
+    NSError *copyErr = nil;
+    [[NSFileManager defaultManager] copyItemAtPath:shuttleConfigFile toPath:dest error:&copyErr];
+    if (copyErr)
+        [self throwError:@"Export failed" additionalInfo:copyErr.localizedDescription continueOnErrorOption:YES];
 }
 
 - (IBAction)configure:(id)sender {

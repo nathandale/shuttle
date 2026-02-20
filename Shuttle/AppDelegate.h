@@ -50,7 +50,9 @@
 
     // LAN SSH scanner
     NSMenu *lanSubMenu;
-    NSMutableArray *lanHosts;
+    NSMutableArray *lanHosts;      // array of {ip, hostname} dicts from port-22 scan
+    NSMutableArray *bonjourHosts;  // array of {hostname, ip} dicts from mDNS/_ssh._tcp.
+    NSNetServiceBrowser *sshBrowser;
     NSDate *lastLanScan;
     BOOL isLanScanning;
 
