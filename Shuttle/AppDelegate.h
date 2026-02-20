@@ -6,6 +6,8 @@
 #import <Cocoa/Cocoa.h>
 #import "LaunchAtLoginController.h"
 
+@class ServerManagerWindowController;
+
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>{
     IBOutlet NSMenu *menu;
     IBOutlet NSArrayController *arrayController;
@@ -45,8 +47,26 @@
     NSMutableArray* ignoreKeywords;
     
     LaunchAtLoginController *launchAtLoginController;
-    
+
+    // LAN SSH scanner
+    NSMenu *lanSubMenu;
+    NSMutableArray *lanHosts;
+    NSDate *lastLanScan;
+    BOOL isLanScanning;
+
+    // Address book (new schema)
+    NSMutableArray *servers;
+    NSMutableArray *categories;
+    ServerManagerWindowController *managerWindowController;
+
 }
+
+// Public accessors for ServerManagerWindowController
+- (NSMutableArray *)servers;
+- (NSMutableArray *)categories;
+- (NSString *)configFilePath;
+- (void)loadMenu;
+- (IBAction)showManager:(id)sender;
 
 - (void)menuWillOpen:(NSMenu *)menu;
 

@@ -5,6 +5,13 @@
 
 #import "AppDelegate.h"
 #import "AboutWindowController.h"
+#import "ServerManagerWindowController.h"
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <fcntl.h>
 
 @implementation AppDelegate
 
@@ -89,6 +96,19 @@
     launchAtLoginController = [[LaunchAtLoginController alloc] init];
     // Needed to trigger the menuWillOpen event
     [menu setDelegate:self];
+
+    // Insert Manager... at top of Settings submenu
+    for (NSMenuItem *item in [menu itemArray]) {
+        if ([[item title] isEqualToString:@"Settings"] && [item hasSubmenu]) {
+            NSMenuItem *managerItem = [[NSMenuItem alloc] initWithTitle:@"Manager..."
+                                                                 action:@selector(showManager:)
+                                                          keyEquivalent:@""];
+            [managerItem setTarget:self];
+            [[item submenu] insertItem:managerItem atIndex:0];
+            [[item submenu] insertItem:[NSMenuItem separatorItem] atIndex:1];
+            break;
+        }
+    }
 }
 
 - (BOOL) needUpdateFor: (NSString*) file with: (NSDate*) old {
@@ -115,13 +135,18 @@
         [self needUpdateFor:shuttleAltConfigFile with:configModified2] ||
         [self needUpdateFor: @"/etc/ssh/ssh_config" with:sshConfigSystem] ||
         [self needUpdateFor: @"~/.ssh/config" with:sshConfigUser]) {
-        
+
         configModified = [self getMTimeFor:shuttleConfigFile];
         configModified2 = [self getMTimeFor:shuttleAltConfigFile];
         sshConfigSystem = [self getMTimeFor: @"/etc/ssh/ssh_config"];
         sshConfigUser = [self getMTimeFor: @"~/.ssh/config"];
-        
+
         [self loadMenu];
+    }
+
+    // Trigger LAN scan on first open
+    if (!lastLanScan && !isLanScanning) {
+        [self scanLAN];
     }
 }
 
@@ -240,125 +265,92 @@
     
     terminalPref = [json[@"terminal"] lowercaseString];
     editorPref = [json[@"editor"] lowercaseString];
-    iTermVersionPref = [json[@"iTerm_version"] lowercaseString];
-    openInPref = [json[@"open_in"] lowercaseString];
-    themePref = json[@"default_theme"];
     launchAtLoginController.launchAtLogin = [json[@"launch_at_login"] boolValue];
-    shuttleHosts = json[@"hosts"];
-    ignoreHosts = json[@"ssh_config_ignore_hosts"];
-    ignoreKeywords = json[@"ssh_config_ignore_keywords"];
-    
-    //add hosts from the alternate json config
-    if (parseAltJSON) {
-        NSData *dataAlt = [NSData dataWithContentsOfFile:shuttleAltConfigFile];
-        id jsonAlt = [NSJSONSerialization JSONObjectWithData:dataAlt options:NSJSONReadingMutableContainers error:nil];
-        shuttleHostsAlt = jsonAlt[@"hosts"];
-        [shuttleHosts addObjectsFromArray:shuttleHostsAlt];
-    }
-    
-    // Should we merge ssh config hosts?
-    BOOL showSshConfigHosts = YES;
-    if ([[json allKeys] containsObject:(@"show_ssh_config_hosts")] && [json[@"show_ssh_config_hosts"] boolValue] == NO) {
-        showSshConfigHosts = NO;
-    }
-    
-    if (showSshConfigHosts) {
-        // Read configuration from ssh config
-        NSDictionary* servers = [self parseSSHConfigFile];
-        for (NSString* key in servers) {
-            BOOL skipCurrent = NO;
-            NSDictionary* cfg = [servers objectForKey:key];
-            
-            // get special name from config if set, fallback to the key
-            NSString* name = cfg[@"name"] ? cfg[@"name"] : key;
-            
-            // Ignore entries that contain wildcard characters
-            if ([name rangeOfString:@"*"].length != 0)
-                skipCurrent = YES;
-            
-            // Ignore entries that start with `.`
-            if ([name hasPrefix:@"."])
-                skipCurrent = YES;
-            
-            // Ignore entries whose name matches exactly any of the values in ignoreHosts
-            for (NSString* ignore in ignoreHosts) {
-                if ([name isEqualToString:ignore]) {
-                    skipCurrent = YES;
-                }
-            }
-            
-            // Ignore entries whose name contains any of the values in ignoreKeywords
-            for (NSString* ignore in ignoreKeywords) {
-                if ([name rangeOfString:ignore].location != NSNotFound) {
-                    skipCurrent = YES;
-                }
-            }
-            
-            if (skipCurrent) {
-                continue;
-            }
-            
-            // Split the host into parts separated by / - the last part is the name for the leaf in the tree
-            NSMutableArray* path = [NSMutableArray arrayWithArray:[name componentsSeparatedByString:@"/"]];
-            NSString* leaf = [path lastObject];
-            if (leaf == nil)
-                continue;
-            [path removeLastObject];
-            
-            NSMutableArray* itemList = shuttleHosts;
-            for (NSString *part in path) {
-                BOOL createList = YES;
-                for (NSDictionary* item in itemList) {
-                    // if we encounter an item with cmd/name then we have to bail
-                    // since there's no way we can dig deeper here
-                    if (item[@"cmd"] || item[@"name"]) {
-                        continue;
-                    }
-                    
-                    // if this item has the name of our target check if we can
-                    // reuse it (if it's an array) - or if we need to bail
-                    if (item[part]) {
-                        // make sure this is an array and not an object
-                        if ([item[part] isKindOfClass:[NSArray class]]) {
-                            itemList = item[part];
+
+    if (json[@"servers"] != nil) {
+        // New address book format
+        NSArray *rawCats = json[@"categories"] ?: @[];
+        categories = [rawCats mutableCopy];
+        NSArray *rawServers = json[@"servers"] ?: @[];
+        NSMutableArray *mutableServers = [NSMutableArray arrayWithCapacity:rawServers.count];
+        for (id s in rawServers) {
+            [mutableServers addObject:[s mutableCopy]];
+        }
+        servers = mutableServers;
+        [self buildMenuFromServers];
+    } else {
+        // Legacy hosts format
+        iTermVersionPref = [json[@"iTerm_version"] lowercaseString];
+        openInPref = [json[@"open_in"] lowercaseString];
+        themePref = json[@"default_theme"];
+        shuttleHosts = json[@"hosts"];
+        ignoreHosts = json[@"ssh_config_ignore_hosts"];
+        ignoreKeywords = json[@"ssh_config_ignore_keywords"];
+
+        if (parseAltJSON) {
+            NSData *dataAlt = [NSData dataWithContentsOfFile:shuttleAltConfigFile];
+            id jsonAlt = [NSJSONSerialization JSONObjectWithData:dataAlt options:NSJSONReadingMutableContainers error:nil];
+            shuttleHostsAlt = jsonAlt[@"hosts"];
+            [shuttleHosts addObjectsFromArray:shuttleHostsAlt];
+        }
+
+        BOOL showSshConfigHosts = YES;
+        if ([[json allKeys] containsObject:@"show_ssh_config_hosts"] && [json[@"show_ssh_config_hosts"] boolValue] == NO)
+            showSshConfigHosts = NO;
+
+        if (showSshConfigHosts) {
+            NSDictionary *sshCfgHosts = [self parseSSHConfigFile];
+            for (NSString *key in sshCfgHosts) {
+                BOOL skipCurrent = NO;
+                NSDictionary *cfg = sshCfgHosts[key];
+                NSString *name = cfg[@"name"] ?: key;
+
+                if ([name rangeOfString:@"*"].length != 0) skipCurrent = YES;
+                if ([name hasPrefix:@"."]) skipCurrent = YES;
+                for (NSString *ignore in ignoreHosts)
+                    if ([name isEqualToString:ignore]) skipCurrent = YES;
+                for (NSString *ignore in ignoreKeywords)
+                    if ([name rangeOfString:ignore].location != NSNotFound) skipCurrent = YES;
+                if (skipCurrent) continue;
+
+                NSMutableArray *path = [NSMutableArray arrayWithArray:[name componentsSeparatedByString:@"/"]];
+                NSString *leaf = [path lastObject];
+                if (!leaf) continue;
+                [path removeLastObject];
+
+                NSMutableArray *itemList = shuttleHosts;
+                for (NSString *part in path) {
+                    BOOL createList = YES;
+                    for (NSDictionary *item in itemList) {
+                        if (item[@"cmd"] || item[@"name"]) continue;
+                        if (item[part]) {
+                            itemList = [item[part] isKindOfClass:[NSArray class]] ? item[part] : nil;
                             createList = NO;
-                        } else {
-                            itemList = nil;
+                            break;
                         }
-                        break;
+                    }
+                    if (!itemList) break;
+                    if (createList) {
+                        NSMutableArray *newList = [[NSMutableArray alloc] init];
+                        [itemList addObject:@{part: newList}];
+                        itemList = newList;
                     }
                 }
-                
-                if (itemList == nil) {
-                    // things gone south... there's already something present and it's
-                    // not an array...
-                    break;
-                }
-                
-                if (createList) {
-                    // create a new entry and set it as itemList
-                    NSMutableArray *newList = [[NSMutableArray alloc] init];
-                    [itemList addObject:[NSDictionary dictionaryWithObject:newList
-                                                                    forKey:part]];
-                    itemList = newList;
-                }
-            }
-            
-            // if everything worked out we will see a non-nil itemList where the
-            // system should be appended to. part hold the last part of the splitted string (aka hostname).
-            if (itemList) {
-                // build the corresponding ssh command
-                NSString* cmd = [NSString stringWithFormat:@"ssh %@", key];
-                
-                // inject the data into the json parser result
-                [itemList addObject:[NSDictionary dictionaryWithObjects:[NSArray arrayWithObjects:leaf, cmd, nil]
-                                                                forKeys:[NSArray arrayWithObjects:@"name", @"cmd", nil]]];
+                if (itemList)
+                    [itemList addObject:@{@"name": leaf, @"cmd": [NSString stringWithFormat:@"ssh %@", key]}];
             }
         }
+        [self buildMenu:shuttleHosts addToMenu:menu];
     }
-    
-    // feed the final result into the recursive method which builds the menu
-    [self buildMenu:shuttleHosts addToMenu:menu];
+
+    // LAN SSH scanner section — inserted before the 4 static XIB items
+    NSInteger lanInsertAt = (NSInteger)[[menu itemArray] count] - 4;
+    [menu insertItem:[NSMenuItem separatorItem] atIndex:lanInsertAt++];
+    NSMenuItem *lanItem = [[NSMenuItem alloc] initWithTitle:@"Local Network" action:nil keyEquivalent:@""];
+    if (!lanSubMenu) lanSubMenu = [[NSMenu alloc] init];
+    [lanItem setSubmenu:lanSubMenu];
+    [menu insertItem:lanItem atIndex:lanInsertAt];
+    [self rebuildLanSubmenu];
 }
 
 - (void) buildMenu:(NSArray*)data addToMenu:(NSMenu *)m {
@@ -427,6 +419,202 @@
         }
     }
 }
+
+// MARK: - Public Accessors
+
+- (NSMutableArray *)servers        { return servers; }
+- (NSMutableArray *)categories     { return categories; }
+- (NSString *)configFilePath       { return shuttleConfigFile; }
+
+// MARK: - Address Book Menu
+
+- (void)buildMenuFromServers {
+    NSInteger insertAt = 0;
+    for (NSString *category in categories) {
+        NSArray *catServers = [servers filteredArrayUsingPredicate:
+            [NSPredicate predicateWithFormat:@"category == %@", category]];
+        if (catServers.count == 0) continue;
+
+        NSMenu *subMenu = [[NSMenu alloc] init];
+        for (NSDictionary *server in catServers) {
+            NSString *name = server[@"name"] ?: server[@"hostname"] ?: @"Unnamed";
+            NSString *cmd  = [self sshCommandForServer:server];
+            NSString *rep  = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, name];
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:name action:@selector(openHost:) keyEquivalent:@""];
+            [item setRepresentedObject:rep];
+            [subMenu addItem:item];
+        }
+        NSMenuItem *catItem = [[NSMenuItem alloc] initWithTitle:category action:nil keyEquivalent:@""];
+        [catItem setSubmenu:subMenu];
+        [menu insertItem:catItem atIndex:insertAt++];
+    }
+    if (insertAt > 0)
+        [menu insertItem:[NSMenuItem separatorItem] atIndex:insertAt];
+}
+
+- (NSString *)sshCommandForServer:(NSDictionary *)server {
+    NSMutableString *cmd = [NSMutableString stringWithString:@"ssh"];
+    NSString *key  = server[@"identity_file"];
+    NSInteger port = [server[@"port"] integerValue];
+    NSString *user = server[@"user"];
+    NSString *host = server[@"hostname"];
+    if (key.length > 0)          [cmd appendFormat:@" -i %@", key];
+    if (port > 0 && port != 22)  [cmd appendFormat:@" -p %ld", (long)port];
+    if (user.length > 0)         [cmd appendFormat:@" %@@%@", user, host];
+    else                         [cmd appendFormat:@" %@", host];
+    return cmd;
+}
+
+// MARK: - Manager Window
+
+- (IBAction)showManager:(id)sender {
+    if (!managerWindowController)
+        managerWindowController = [[ServerManagerWindowController alloc] initWithAppDelegate:self];
+    [managerWindowController.window makeKeyAndOrderFront:nil];
+    [managerWindowController reload];
+}
+
+// MARK: - LAN SSH Scanner
+
+- (NSString *)localIPAddress {
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0) return nil;
+
+    NSString *result = nil;
+    for (struct ifaddrs *c = interfaces; c; c = c->ifa_next) {
+        if (!c->ifa_addr || c->ifa_addr->sa_family != AF_INET) continue;
+        NSString *name = [NSString stringWithUTF8String:c->ifa_name];
+        if (![name hasPrefix:@"en"]) continue;
+        char buf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &((struct sockaddr_in *)c->ifa_addr)->sin_addr, buf, sizeof(buf));
+        NSString *ip = [NSString stringWithUTF8String:buf];
+        if (![ip isEqualToString:@"127.0.0.1"]) { result = ip; break; }
+    }
+    freeifaddrs(interfaces);
+    return result;
+}
+
+- (NSArray *)subnetAddresses:(NSString *)localIP {
+    NSArray *parts = [localIP componentsSeparatedByString:@"."];
+    if (parts.count != 4) return @[];
+    NSString *prefix = [NSString stringWithFormat:@"%@.%@.%@", parts[0], parts[1], parts[2]];
+    NSMutableArray *addresses = [NSMutableArray array];
+    for (int i = 1; i <= 254; i++) {
+        NSString *ip = [NSString stringWithFormat:@"%@.%d", prefix, i];
+        if (![ip isEqualToString:localIP]) [addresses addObject:ip];
+    }
+    return addresses;
+}
+
+- (BOOL)isPort22OpenAt:(NSString *)ip {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return NO;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(22);
+    if (inet_pton(AF_INET, [ip UTF8String], &addr.sin_addr) <= 0) { close(sock); return NO; }
+
+    fcntl(sock, F_SETFL, fcntl(sock, F_GETFL, 0) | O_NONBLOCK);
+    connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+
+    struct timeval tv = {0, 300000}; // 300ms timeout
+    fd_set writefds;
+    FD_ZERO(&writefds);
+    FD_SET(sock, &writefds);
+
+    BOOL open = NO;
+    if (select(sock + 1, NULL, &writefds, NULL, &tv) > 0) {
+        int error = 0; socklen_t len = sizeof(error);
+        getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len);
+        open = (error == 0);
+    }
+    close(sock);
+    return open;
+}
+
+- (void)scanLAN {
+    if (isLanScanning) return;
+    isLanScanning = YES;
+    [self rebuildLanSubmenu];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *localIP = [self localIPAddress];
+        if (!localIP) {
+            dispatch_async(dispatch_get_main_queue(), ^{ isLanScanning = NO; [self rebuildLanSubmenu]; });
+            return;
+        }
+
+        NSArray *addresses = [self subnetAddresses:localIP];
+        NSMutableArray *found = [NSMutableArray array];
+        NSObject *lock = [[NSObject alloc] init];
+
+        dispatch_group_t group = dispatch_group_create();
+        dispatch_semaphore_t sem = dispatch_semaphore_create(50);
+        dispatch_queue_t q = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+
+        for (NSString *ip in addresses) {
+            dispatch_group_async(group, q, ^{
+                dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+                if ([self isPort22OpenAt:ip]) {
+                    @synchronized(lock) { [found addObject:ip]; }
+                }
+                dispatch_semaphore_signal(sem);
+            });
+        }
+
+        dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+            lanHosts = found;
+            lastLanScan = [NSDate date];
+            isLanScanning = NO;
+            [self rebuildLanSubmenu];
+        });
+    });
+}
+
+- (void)rebuildLanSubmenu {
+    if (!lanSubMenu) return;
+    [lanSubMenu removeAllItems];
+
+    if (isLanScanning) {
+        NSMenuItem *item = [lanSubMenu addItemWithTitle:@"Scanning..." action:nil keyEquivalent:@""];
+        [item setEnabled:NO];
+    } else if (!lanHosts || lanHosts.count == 0) {
+        NSMenuItem *item = [lanSubMenu addItemWithTitle:@"No SSH hosts found" action:nil keyEquivalent:@""];
+        [item setEnabled:NO];
+    } else {
+        NSArray *sorted = [lanHosts sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            return [a compare:b options:NSNumericSearch];
+        }];
+        for (NSString *ip in sorted) {
+            NSString *cmd = [NSString stringWithFormat:@"ssh %@", ip];
+            NSString *repObj = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, ip];
+            NSMenuItem *item = [lanSubMenu addItemWithTitle:ip action:@selector(openHost:) keyEquivalent:@""];
+            [item setRepresentedObject:repObj];
+        }
+    }
+
+    [lanSubMenu addItem:[NSMenuItem separatorItem]];
+
+    if (lastLanScan && !isLanScanning) {
+        NSInteger elapsed = (NSInteger)[[NSDate date] timeIntervalSinceDate:lastLanScan];
+        NSString *age = elapsed < 60
+            ? [NSString stringWithFormat:@"Scanned %lds ago", (long)elapsed]
+            : [NSString stringWithFormat:@"Scanned %ldm ago", (long)(elapsed / 60)];
+        NSMenuItem *timeItem = [lanSubMenu addItemWithTitle:age action:nil keyEquivalent:@""];
+        [timeItem setEnabled:NO];
+        [lanSubMenu addItem:[NSMenuItem separatorItem]];
+    }
+
+    [lanSubMenu addItemWithTitle:@"Scan Now" action:@selector(scanNow:) keyEquivalent:@""];
+}
+
+- (IBAction)scanNow:(id)sender {
+    [self scanLAN];
+}
+
+// MARK: -
 
 - (void) separatorSortRemoval:(NSString *)currentName {
     NSError *regexError = nil;
