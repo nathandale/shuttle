@@ -942,6 +942,7 @@
 
         if (appURL) {
             NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
+            config.createsNewApplicationInstance = YES; // always open a new window, even if already running
             config.arguments = @[@"-e", @"sh", @"-c", sshCmd];
             [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
                                                   configuration:config
