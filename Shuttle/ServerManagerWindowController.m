@@ -6,44 +6,49 @@
 #import "ServerManagerWindowController.h"
 #import "AppDelegate.h"
 
-// MARK: - Private interface
-
 @interface ServerManagerWindowController () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate>
 
-@property (nonatomic, weak)   AppDelegate     *appDelegate;
+@property (nonatomic, weak)   AppDelegate           *appDelegate;
 
-// Split layout
-@property (nonatomic, strong) NSSplitView     *splitView;
+// Layout
+@property (nonatomic, strong) NSSplitView           *splitView;
 
 // Left pane
-@property (nonatomic, strong) NSScrollView    *sidebarScroll;
-@property (nonatomic, strong) NSOutlineView   *outlineView;
-@property (nonatomic, strong) NSButton        *addServerBtn;
-@property (nonatomic, strong) NSButton        *removeServerBtn;
-@property (nonatomic, strong) NSButton        *addCategoryBtn;
+@property (nonatomic, strong) NSVisualEffectView    *sidebar;
+@property (nonatomic, strong) NSOutlineView         *outlineView;
+@property (nonatomic, strong) NSSegmentedControl    *addRemoveControl;
 
-// Right pane — detail form
-@property (nonatomic, strong) NSView          *detailView;
-@property (nonatomic, strong) NSTextField     *placeholderLabel;
+// Right pane
+@property (nonatomic, strong) NSView                *detailPane;
+@property (nonatomic, strong) NSTextField           *placeholderLabel;
 
-@property (nonatomic, strong) NSTextField     *nameField;
-@property (nonatomic, strong) NSTextField     *hostnameField;
-@property (nonatomic, strong) NSTextField     *userField;
-@property (nonatomic, strong) NSTextField     *portField;
-@property (nonatomic, strong) NSPopUpButton   *keyPopup;
-@property (nonatomic, strong) NSPopUpButton   *categoryPopup;
-@property (nonatomic, strong) NSPopUpButton   *terminalPopup;
-@property (nonatomic, strong) NSButton        *saveBtn;
-@property (nonatomic, strong) NSButton        *deleteBtn;
+// Form — built once, shown/hidden
+@property (nonatomic, strong) NSView                *formContainer;
+@property (nonatomic, strong) NSTextField           *nameField;
+@property (nonatomic, strong) NSTextField           *hostnameField;
+@property (nonatomic, strong) NSTextField           *userField;
+@property (nonatomic, strong) NSTextField           *portField;
+@property (nonatomic, strong) NSPopUpButton         *keyPopup;
+@property (nonatomic, strong) NSPopUpButton         *categoryPopup;
+@property (nonatomic, strong) NSPopUpButton         *terminalPopup;
+@property (nonatomic, strong) NSButton              *saveBtn;
+@property (nonatomic, strong) NSButton              *deleteBtn;
 
 // State
-@property (nonatomic, strong) NSMutableDictionary *selectedServer;
+@property (nonatomic, strong) NSMutableDictionary   *selectedServer;
 
 @end
 
-// MARK: - Implementation
-
 @implementation ServerManagerWindowController
+
+static const CGFloat kSidebarWidth  = 200.0;
+static const CGFloat kBottomBarH    = 34.0;
+static const CGFloat kLabelColW     = 78.0;
+static const CGFloat kFieldColW     = 270.0;
+static const CGFloat kRowSpacing    = 10.0;
+static const CGFloat kColSpacing    = 8.0;
+
+// MARK: - Init
 
 - (instancetype)initWithAppDelegate:(AppDelegate *)delegate {
     self = [super initWithWindow:nil];
@@ -54,213 +59,224 @@
     return self;
 }
 
-// MARK: - Window construction
+// MARK: - Window
 
 - (void)buildWindow {
-    NSRect frame = NSMakeRect(0, 0, 720, 500);
-    NSUInteger style = NSWindowStyleMaskTitled
-                     | NSWindowStyleMaskClosable
-                     | NSWindowStyleMaskResizable
-                     | NSWindowStyleMaskMiniaturizable;
-
+    NSRect frame = NSMakeRect(0, 0, 700, 480);
+    NSWindowStyleMask style = NSWindowStyleMaskTitled
+                            | NSWindowStyleMaskClosable
+                            | NSWindowStyleMaskMiniaturizable
+                            | NSWindowStyleMaskResizable;
     NSWindow *win = [[NSWindow alloc] initWithContentRect:frame
                                                 styleMask:style
                                                   backing:NSBackingStoreBuffered
                                                     defer:NO];
-    [win setTitle:@"SSH Manager"];
+    win.title = @"SSH Manager";
+    win.minSize = NSMakeSize(580, 380);
     [win center];
     [self setWindow:win];
 
-    // ---- Split view ----
     _splitView = [[NSSplitView alloc] initWithFrame:win.contentView.bounds];
-    [_splitView setDividerStyle:NSSplitViewDividerStyleThin];
-    [_splitView setVertical:YES];
-    [_splitView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    _splitView.dividerStyle = NSSplitViewDividerStyleThin;
+    _splitView.vertical = YES;
+    _splitView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [win.contentView addSubview:_splitView];
 
-    // ---- Left pane ----
-    NSView *leftPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 500)];
+    [self buildSidebar];
+    [self buildDetailPane];
 
-    // Outline view
-    _outlineView = [[NSOutlineView alloc] init];
-    [_outlineView setDataSource:self];
-    [_outlineView setDelegate:self];
-    [_outlineView setHeaderView:nil];
-    [_outlineView setRowSizeStyle:NSTableViewRowSizeStyleMedium];
-    [_outlineView setSelectionHighlightStyle:NSTableViewSelectionHighlightStyleSourceList];
-    [_outlineView setFloatsGroupRows:NO];
-
-    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"main"];
-    [col setMinWidth:100];
-    [_outlineView addTableColumn:col];
-    [_outlineView setOutlineTableColumn:col];
-
-    _sidebarScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 32, 220, 468)];
-    [_sidebarScroll setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    [_sidebarScroll setHasVerticalScroller:YES];
-    [_sidebarScroll setDocumentView:_outlineView];
-    [leftPane addSubview:_sidebarScroll];
-
-    // Bottom bar buttons
-    NSView *bottomBar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 32)];
-    [bottomBar setAutoresizingMask:NSViewWidthSizable];
-
-    _addServerBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(addServer:)];
-    [_addServerBtn setFrame:NSMakeRect(4, 4, 26, 24)];
-    [_addServerBtn setBezelStyle:NSBezelStyleRounded];
-    [_addServerBtn setFont:[NSFont systemFontOfSize:16]];
-    [bottomBar addSubview:_addServerBtn];
-
-    _removeServerBtn = [NSButton buttonWithTitle:@"−" target:self action:@selector(removeServer:)];
-    [_removeServerBtn setFrame:NSMakeRect(32, 4, 26, 24)];
-    [_removeServerBtn setBezelStyle:NSBezelStyleRounded];
-    [_removeServerBtn setFont:[NSFont systemFontOfSize:16]];
-    [bottomBar addSubview:_removeServerBtn];
-
-    _addCategoryBtn = [NSButton buttonWithTitle:@"+ Category" target:self action:@selector(addCategory:)];
-    [_addCategoryBtn setFrame:NSMakeRect(62, 4, 90, 24)];
-    [_addCategoryBtn setBezelStyle:NSBezelStyleRounded];
-    [_addCategoryBtn setFont:[NSFont systemFontOfSize:11]];
-    [bottomBar addSubview:_addCategoryBtn];
-
-    [leftPane addSubview:bottomBar];
-    [_splitView addSubview:leftPane];
-
-    // ---- Right pane (detail) ----
-    _detailView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 500)];
-    [_detailView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-
-    // Placeholder
-    _placeholderLabel = [NSTextField labelWithString:@"Select a server or add a new one."];
-    [_placeholderLabel setAlignment:NSTextAlignmentCenter];
-    [_placeholderLabel setTextColor:[NSColor secondaryLabelColor]];
-    [_placeholderLabel setFont:[NSFont systemFontOfSize:14]];
-    [_placeholderLabel setFrame:NSMakeRect(0, 200, 500, 30)];
-    [_placeholderLabel setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin | NSViewMinYMargin];
-    [_detailView addSubview:_placeholderLabel];
-
-    // Form fields — built inside a container view
-    NSView *form = [self buildForm];
-    [form setHidden:YES];
-    [_detailView addSubview:form];
-
-    [_splitView addSubview:_detailView];
-
-    // Set initial divider position after window is shown
-    [_splitView setPosition:220 ofDividerAtIndex:0];
+    [_splitView setPosition:kSidebarWidth ofDividerAtIndex:0];
 }
 
-- (NSView *)buildForm {
-    NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 500)];
-    [form setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    form.identifier = @"formContainer";
+// MARK: - Sidebar
 
-    CGFloat x = 130, w = 300, lx = 20, lw = 105, row = 420, rowH = 30, gap = 36;
+- (void)buildSidebar {
+    NSRect r = NSMakeRect(0, 0, kSidebarWidth, 480);
 
-    // Helper blocks
-    NSTextField *(^makeLabel)(NSString *) = ^NSTextField *(NSString *text) {
-        NSTextField *lbl = [NSTextField labelWithString:text];
-        [lbl setAlignment:NSTextAlignmentRight];
-        [lbl setFont:[NSFont systemFontOfSize:12]];
-        return lbl;
-    };
+    _sidebar = [[NSVisualEffectView alloc] initWithFrame:r];
+    _sidebar.material    = NSVisualEffectMaterialSidebar;
+    _sidebar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    _sidebar.state       = NSVisualEffectStateActive;
 
-    NSTextField *(^makeField)(void) = ^NSTextField *(void) {
-        NSTextField *f = [[NSTextField alloc] init];
-        [f setBezelStyle:NSTextFieldSquareBezel];
-        [f setBordered:YES];
-        [f setEditable:YES];
+    // ---- Outline scroll view ----
+    NSRect scrollFrame = NSMakeRect(0, kBottomBarH, kSidebarWidth, 480 - kBottomBarH);
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:scrollFrame];
+    scroll.autoresizingMask   = NSViewWidthSizable | NSViewHeightSizable;
+    scroll.hasVerticalScroller = YES;
+    scroll.drawsBackground    = NO;
+
+    _outlineView = [[NSOutlineView alloc] init];
+    _outlineView.dataSource               = self;
+    _outlineView.delegate                 = self;
+    _outlineView.headerView               = nil;
+    _outlineView.rowSizeStyle             = NSTableViewRowSizeStyleDefault;
+    _outlineView.selectionHighlightStyle  = NSTableViewSelectionHighlightStyleSourceList;
+    _outlineView.floatsGroupRows          = NO;
+    _outlineView.backgroundColor          = [NSColor clearColor];
+    _outlineView.intercellSpacing         = NSMakeSize(0, 2);
+
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"col"];
+    col.minWidth = 80;
+    [_outlineView addTableColumn:col];
+    _outlineView.outlineTableColumn = col;
+
+    scroll.documentView = _outlineView;
+    [_sidebar addSubview:scroll];
+
+    // ---- Bottom action bar ----
+    NSView *bar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kSidebarWidth, kBottomBarH)];
+    bar.autoresizingMask = NSViewWidthSizable;
+
+    // Hairline separator at top of bar
+    NSBox *sep = [[NSBox alloc] initWithFrame:NSMakeRect(0, kBottomBarH - 1, kSidebarWidth, 1)];
+    sep.boxType = NSBoxSeparator;
+    sep.autoresizingMask = NSViewWidthSizable;
+    [bar addSubview:sep];
+
+    // +/− segmented control
+    _addRemoveControl = [NSSegmentedControl
+        segmentedControlWithLabels:@[@"+", @"−"]
+                      trackingMode:NSSegmentSwitchTrackingMomentary
+                            target:self
+                            action:@selector(addRemoveAction:)];
+    _addRemoveControl.frame = NSMakeRect(7, 5, 54, 24);
+    _addRemoveControl.font  = [NSFont systemFontOfSize:16 weight:NSFontWeightLight];
+    [bar addSubview:_addRemoveControl];
+
+    // New Category button
+    NSButton *catBtn = [NSButton buttonWithTitle:@"New Category"
+                                          target:self
+                                          action:@selector(addCategory:)];
+    catBtn.bezelStyle = NSBezelStyleRounded;
+    catBtn.font       = [NSFont systemFontOfSize:11];
+    catBtn.frame      = NSMakeRect(66, 5, 110, 24);
+    [bar addSubview:catBtn];
+
+    [_sidebar addSubview:bar];
+    [_splitView addSubview:_sidebar];
+}
+
+// MARK: - Detail pane
+
+- (void)buildDetailPane {
+    _detailPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 480)];
+    _detailPane.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    // Placeholder shown when nothing is selected
+    _placeholderLabel = [NSTextField labelWithString:@"Select a server or press + to add one."];
+    _placeholderLabel.alignment  = NSTextAlignmentCenter;
+    _placeholderLabel.textColor  = [NSColor tertiaryLabelColor];
+    _placeholderLabel.font       = [NSFont systemFontOfSize:13];
+    _placeholderLabel.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin | NSViewMaxYMargin;
+    [_detailPane addSubview:_placeholderLabel];
+
+    // Form container
+    _formContainer = [[NSView alloc] init];
+    _formContainer.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin;
+    _formContainer.hidden = YES;
+
+    [self buildFormFields];
+    [_detailPane addSubview:_formContainer];
+    [_splitView addSubview:_detailPane];
+}
+
+// MARK: - Form fields (NSGridView)
+
+- (void)buildFormFields {
+    // Label factory: right-aligned, small, secondary color
+    NSTextField *(^lbl)(NSString *) = ^(NSString *t) {
+        NSTextField *f = [NSTextField labelWithString:t];
+        f.alignment  = NSTextAlignmentRight;
+        f.font       = [NSFont systemFontOfSize:12];
+        f.textColor  = [NSColor secondaryLabelColor];
         return f;
     };
 
-    // Name (larger)
-    NSTextField *nameLbl = makeLabel(@"Name:");
-    [nameLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:nameLbl];
+    // Text field factory
+    NSTextField *(^fld)(NSString *) = ^(NSString *ph) {
+        NSTextField *f = [[NSTextField alloc] init];
+        f.bezeled          = YES;
+        f.bezelStyle       = NSTextFieldSquareBezel;
+        f.editable         = YES;
+        f.font             = [NSFont systemFontOfSize:13];
+        f.placeholderString = ph;
+        f.delegate         = self;
+        return f;
+    };
 
-    _nameField = makeField();
-    [_nameField setFont:[NSFont boldSystemFontOfSize:14]];
-    [_nameField setFrame:NSMakeRect(x, row, w, rowH)];
-    [_nameField setDelegate:self];
-    [form addSubview:_nameField];
-    row -= gap;
+    _nameField     = fld(@"Display name");
+    _nameField.font = [NSFont systemFontOfSize:15];
 
-    // Hostname
-    NSTextField *hostLbl = makeLabel(@"Hostname:");
-    [hostLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:hostLbl];
+    _hostnameField = fld(@"hostname, .local name, or IP address");
+    _userField     = fld(@"username");
+    _portField     = fld(@"22");
 
-    _hostnameField = makeField();
-    [_hostnameField setFrame:NSMakeRect(x, row, w, rowH)];
-    [_hostnameField setDelegate:self];
-    [form addSubview:_hostnameField];
-    row -= gap;
+    _keyPopup      = [[NSPopUpButton alloc] init];
+    _keyPopup.font = [NSFont systemFontOfSize:13];
 
-    // Username + Port side by side
-    NSTextField *userLbl = makeLabel(@"User:");
-    [userLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:userLbl];
+    _categoryPopup      = [[NSPopUpButton alloc] init];
+    _categoryPopup.font = [NSFont systemFontOfSize:13];
 
-    _userField = makeField();
-    [_userField setFrame:NSMakeRect(x, row, 140, rowH)];
-    [_userField setDelegate:self];
-    [form addSubview:_userField];
+    _terminalPopup = [[NSPopUpButton alloc] init];
+    [_terminalPopup addItemsWithTitles:@[@"Default (from settings)",
+                                         @"terminal", @"iterm", @"ghostty"]];
+    _terminalPopup.font = [NSFont systemFontOfSize:13];
 
-    NSTextField *portLbl = makeLabel(@"Port:");
-    [portLbl setAlignment:NSTextAlignmentLeft];
-    [portLbl setFrame:NSMakeRect(x + 148, row, 38, rowH)];
-    [form addSubview:portLbl];
+    // Grid: two columns — label | control
+    NSGridView *grid = [NSGridView gridViewWithViews:@[
+        @[lbl(@"Name"),     _nameField],
+        @[lbl(@"Hostname"), _hostnameField],
+        @[lbl(@"User"),     _userField],
+        @[lbl(@"Port"),     _portField],
+        @[lbl(@"SSH Key"),  _keyPopup],
+        @[lbl(@"Category"), _categoryPopup],
+        @[lbl(@"Terminal"), _terminalPopup],
+    ]];
+    grid.rowSpacing    = kRowSpacing;
+    grid.columnSpacing = kColSpacing;
+    [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
+    [grid columnAtIndex:0].width      = kLabelColW;
+    [grid columnAtIndex:1].width      = kFieldColW;
 
-    _portField = makeField();
-    [_portField setFrame:NSMakeRect(x + 190, row, 110, rowH)];
-    [_portField setPlaceholderString:@"22"];
-    [_portField setDelegate:self];
-    [form addSubview:_portField];
-    row -= gap;
+    // Buttons below grid
+    _saveBtn = [NSButton buttonWithTitle:@"Save Changes"
+                                  target:self action:@selector(saveServer:)];
+    _saveBtn.bezelStyle   = NSBezelStyleRounded;
+    _saveBtn.keyEquivalent = @"\r";
 
-    // SSH Key
-    NSTextField *keyLbl = makeLabel(@"SSH Key:");
-    [keyLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:keyLbl];
+    _deleteBtn = [NSButton buttonWithTitle:@"Delete Server"
+                                    target:self action:@selector(deleteServer:)];
+    _deleteBtn.bezelStyle = NSBezelStyleRounded;
 
-    _keyPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(x, row, w, rowH) pullsDown:NO];
-    [form addSubview:_keyPopup];
-    row -= gap;
+    // Size everything, place in formContainer
+    CGSize gs = grid.fittingSize;
+    CGFloat totalW = gs.width;
+    CGFloat btnH   = 28.0;
+    CGFloat gap    = 14.0;
+    CGFloat totalH = gs.height + gap + btnH;
 
-    // Category
-    NSTextField *catLbl = makeLabel(@"Category:");
-    [catLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:catLbl];
+    _formContainer.frame = NSMakeRect(0, 0, totalW, totalH);
 
-    _categoryPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(x, row, w, rowH) pullsDown:NO];
-    [form addSubview:_categoryPopup];
-    row -= gap;
+    grid.frame = NSMakeRect(0, btnH + gap, gs.width, gs.height);
+    [_formContainer addSubview:grid];
 
-    // Terminal
-    NSTextField *termLbl = makeLabel(@"Terminal:");
-    [termLbl setFrame:NSMakeRect(lx, row, lw, rowH)];
-    [form addSubview:termLbl];
+    _saveBtn.frame   = NSMakeRect(kLabelColW + kColSpacing, 0, 120, btnH);
+    _deleteBtn.frame = NSMakeRect(kLabelColW + kColSpacing + 128, 0, 120, btnH);
+    [_formContainer addSubview:_saveBtn];
+    [_formContainer addSubview:_deleteBtn];
+}
 
-    _terminalPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(x, row, w, rowH) pullsDown:NO];
-    [_terminalPopup addItemsWithTitles:@[@"Default (from settings)", @"terminal", @"iterm", @"ghostty"]];
-    [form addSubview:_terminalPopup];
-    row -= gap;
+// Centers formContainer inside detailPane
+- (void)layoutFormInPane {
+    CGFloat pw = _detailPane.bounds.size.width  ?: 500;
+    CGFloat ph = _detailPane.bounds.size.height ?: 480;
+    CGFloat fw = _formContainer.bounds.size.width;
+    CGFloat fh = _formContainer.bounds.size.height;
+    CGFloat x  = floor((pw - fw) / 2.0);
+    CGFloat y  = floor((ph - fh) / 2.0) + 20; // slightly above center
+    _formContainer.frame = NSMakeRect(x, y, fw, fh);
 
-    row -= 10; // spacer
-
-    // Save + Delete buttons
-    _saveBtn = [NSButton buttonWithTitle:@"Save" target:self action:@selector(saveServer:)];
-    [_saveBtn setFrame:NSMakeRect(x, row, 90, 28)];
-    [_saveBtn setBezelStyle:NSBezelStyleRounded];
-    [_saveBtn setKeyEquivalent:@"\r"];
-    [form addSubview:_saveBtn];
-
-    _deleteBtn = [NSButton buttonWithTitle:@"Delete Server" target:self action:@selector(deleteServer:)];
-    [_deleteBtn setFrame:NSMakeRect(x + 100, row, 120, 28)];
-    [_deleteBtn setBezelStyle:NSBezelStyleRounded];
-    [form addSubview:_deleteBtn];
-
-    return form;
+    _placeholderLabel.frame = NSMakeRect(0, floor(ph / 2.0) - 10, pw, 20);
 }
 
 // MARK: - Public
@@ -268,32 +284,27 @@
 - (void)reload {
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];
-    [self clearDetail];
+    [self showPlaceholder];
 }
 
-// MARK: - Outline data source
+// MARK: - NSOutlineView data source
 
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
-    if (item == nil) {
-        return (NSInteger)[_appDelegate.categories count];
-    }
-    if ([item isKindOfClass:[NSString class]]) {
-        NSString *cat = item;
+    if (!item)
+        return (NSInteger)_appDelegate.categories.count;
+    if ([item isKindOfClass:[NSString class]])
         return (NSInteger)[[_appDelegate.servers filteredArrayUsingPredicate:
-            [NSPredicate predicateWithFormat:@"category == %@", cat]] count];
-    }
+            [NSPredicate predicateWithFormat:@"category == %@", item]] count];
     return 0;
 }
 
-- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)index ofItem:(id)item {
-    if (item == nil) {
-        return _appDelegate.categories[(NSUInteger)index];
-    }
+- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)idx ofItem:(id)item {
+    if (!item)
+        return _appDelegate.categories[(NSUInteger)idx];
     if ([item isKindOfClass:[NSString class]]) {
-        NSString *cat = item;
-        NSArray *catServers = [_appDelegate.servers filteredArrayUsingPredicate:
-            [NSPredicate predicateWithFormat:@"category == %@", cat]];
-        return catServers[(NSUInteger)index];
+        NSArray *cs = [_appDelegate.servers filteredArrayUsingPredicate:
+            [NSPredicate predicateWithFormat:@"category == %@", item]];
+        return cs[(NSUInteger)idx];
     }
     return nil;
 }
@@ -302,7 +313,7 @@
     return [item isKindOfClass:[NSString class]];
 }
 
-// MARK: - Outline delegate
+// MARK: - NSOutlineView delegate
 
 - (BOOL)outlineView:(NSOutlineView *)ov isGroupItem:(id)item {
     return [item isKindOfClass:[NSString class]];
@@ -312,137 +323,136 @@
     return [item isKindOfClass:[NSDictionary class]];
 }
 
-- (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)col item:(id)item {
+- (NSTableRowView *)outlineView:(NSOutlineView *)ov rowViewForItem:(id)item {
+    return nil; // use default
+}
+
+- (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)tc item:(id)item {
     if ([item isKindOfClass:[NSString class]]) {
-        NSString *cat = item;
-        NSTableCellView *cell = [ov makeViewWithIdentifier:@"groupCell" owner:self];
+        NSTableCellView *cell = [ov makeViewWithIdentifier:@"group" owner:self];
         if (!cell) {
-            cell = [[NSTableCellView alloc] initWithFrame:NSZeroRect];
-            cell.identifier = @"groupCell";
+            cell = [[NSTableCellView alloc] init];
+            cell.identifier = @"group";
             NSTextField *tf = [NSTextField labelWithString:@""];
+            tf.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+            tf.textColor = [NSColor secondaryLabelColor];
             tf.identifier = @"text";
-            tf.font = [NSFont boldSystemFontOfSize:11];
             [cell addSubview:tf];
             cell.textField = tf;
         }
-        cell.textField.stringValue = cat;
+        cell.textField.stringValue = [(NSString *)item uppercaseString];
         return cell;
     }
 
-    // Server row
     NSDictionary *server = item;
-    NSTableCellView *cell = [ov makeViewWithIdentifier:@"serverCell" owner:self];
+    NSTableCellView *cell = [ov makeViewWithIdentifier:@"server" owner:self];
     if (!cell) {
-        cell = [[NSTableCellView alloc] initWithFrame:NSZeroRect];
-        cell.identifier = @"serverCell";
+        cell = [[NSTableCellView alloc] init];
+        cell.identifier = @"server";
         NSTextField *tf = [NSTextField labelWithString:@""];
-        tf.identifier = @"text";
         tf.font = [NSFont systemFontOfSize:13];
+        tf.identifier = @"text";
         [cell addSubview:tf];
         cell.textField = tf;
     }
-    NSString *displayName = server[@"name"] ?: server[@"hostname"] ?: @"Unnamed";
-    cell.textField.stringValue = displayName;
+    NSString *name = server[@"name"] ?: server[@"hostname"] ?: @"Unnamed";
+    cell.textField.stringValue = name;
     return cell;
 }
 
-- (void)outlineViewSelectionDidChange:(NSNotification *)notification {
-    id item = [_outlineView itemAtRow:[_outlineView selectedRow]];
+- (CGFloat)outlineView:(NSOutlineView *)ov heightOfRowByItem:(id)item {
+    return [item isKindOfClass:[NSString class]] ? 22.0 : 28.0;
+}
+
+- (void)outlineViewSelectionDidChange:(NSNotification *)note {
+    id item = [_outlineView itemAtRow:_outlineView.selectedRow];
     if ([item isKindOfClass:[NSDictionary class]]) {
         _selectedServer = (NSMutableDictionary *)item;
         [self populateForm];
     } else {
-        [self clearDetail];
+        [self showPlaceholder];
     }
 }
 
-// MARK: - Detail form helpers
+// MARK: - Show / hide form
 
-- (void)clearDetail {
+- (void)showPlaceholder {
     _selectedServer = nil;
+    [self layoutFormInPane];
+    _formContainer.hidden    = YES;
     _placeholderLabel.hidden = NO;
-    [self formView].hidden = YES;
-}
-
-- (NSView *)formView {
-    for (NSView *v in _detailView.subviews) {
-        if ([v.identifier isEqualToString:@"formContainer"]) return v;
-    }
-    return nil;
 }
 
 - (void)populateForm {
-    // Populate SSH key popup from ~/.ssh/
+    // SSH keys from ~/.ssh/
     [_keyPopup removeAllItems];
     [_keyPopup addItemWithTitle:@"None"];
     NSString *sshDir = [NSHomeDirectory() stringByAppendingPathComponent:@".ssh"];
-    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:sshDir error:nil];
-    for (NSString *f in files) {
-        // Private keys: no .pub extension, not known_hosts/config/authorized_keys
-        if ([f hasSuffix:@".pub"]) continue;
-        if ([f isEqualToString:@"known_hosts"] || [f isEqualToString:@"config"]
-            || [f isEqualToString:@"authorized_keys"] || [f hasPrefix:@"."]) continue;
+    NSArray *sshFiles = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:sshDir error:nil];
+    for (NSString *f in sshFiles) {
+        if ([f hasSuffix:@".pub"])    continue;
+        if ([f isEqualToString:@"known_hosts"]    ||
+            [f isEqualToString:@"config"]          ||
+            [f isEqualToString:@"authorized_keys"] ||
+            [f hasPrefix:@"."])                    continue;
         [_keyPopup addItemWithTitle:f];
     }
 
-    // Populate category popup
+    // Categories
     [_categoryPopup removeAllItems];
     [_categoryPopup addItemsWithTitles:_appDelegate.categories];
 
-    // Fill in current server values
-    NSString *name = _selectedServer[@"name"] ?: @"";
-    NSString *host = _selectedServer[@"hostname"] ?: @"";
-    NSString *user = _selectedServer[@"user"] ?: @"";
-    NSString *port = _selectedServer[@"port"] ? [_selectedServer[@"port"] stringValue] : @"";
+    // Fill values
+    _nameField.stringValue     = _selectedServer[@"name"]     ?: @"";
+    _hostnameField.stringValue = _selectedServer[@"hostname"] ?: @"";
+    _userField.stringValue     = _selectedServer[@"user"]     ?: @"";
+    _portField.stringValue     = _selectedServer[@"port"] ? [_selectedServer[@"port"] stringValue] : @"";
+
     NSString *key  = _selectedServer[@"identity_file"] ?: @"";
-    NSString *cat  = _selectedServer[@"category"] ?: @"";
-    NSString *term = _selectedServer[@"terminal"] ?: @"";
-
-    _nameField.stringValue     = name;
-    _hostnameField.stringValue = host;
-    _userField.stringValue     = user;
-    _portField.stringValue     = port;
-
-    if (key.length > 0 && [_keyPopup itemWithTitle:key])
-        [_keyPopup selectItemWithTitle:key];
+    NSString *keyName = [key lastPathComponent];
+    if (keyName.length && [_keyPopup itemWithTitle:keyName])
+        [_keyPopup selectItemWithTitle:keyName];
     else
         [_keyPopup selectItemAtIndex:0];
 
-    if (cat.length > 0 && [_categoryPopup itemWithTitle:cat])
-        [_categoryPopup selectItemWithTitle:cat];
+    NSString *cat = _selectedServer[@"category"] ?: @"";
+    if ([_categoryPopup itemWithTitle:cat]) [_categoryPopup selectItemWithTitle:cat];
 
-    if (term.length > 0 && [_terminalPopup itemWithTitle:term])
+    NSString *term = _selectedServer[@"terminal"] ?: @"";
+    if (term.length && [_terminalPopup itemWithTitle:term])
         [_terminalPopup selectItemWithTitle:term];
     else
         [_terminalPopup selectItemAtIndex:0];
 
-    NSView *form = [self formView];
-    form.hidden = NO;
+    [self layoutFormInPane];
     _placeholderLabel.hidden = YES;
+    _formContainer.hidden    = NO;
 }
 
-// MARK: - Add / Remove actions
+// MARK: - Add / Remove server
 
-- (IBAction)addServer:(id)sender {
-    // Find the first category (or create one)
-    NSMutableArray *cats = _appDelegate.categories;
-    if (cats.count == 0) {
-        [cats addObject:@"SERVERS"];
-    }
-    NSString *defaultCat = cats.firstObject;
+- (IBAction)addRemoveAction:(NSSegmentedControl *)sender {
+    if (sender.selectedSegment == 0)
+        [self addServer];
+    else
+        [self removeServer];
+}
 
-    NSMutableDictionary *newServer = [@{
+- (void)addServer {
+    if (_appDelegate.categories.count == 0)
+        [_appDelegate.categories addObject:@"SERVERS"];
+
+    NSMutableDictionary *s = [@{
         @"name":     @"New Server",
         @"hostname": @"",
-        @"category": defaultCat
+        @"category": _appDelegate.categories.firstObject
     } mutableCopy];
+    [_appDelegate.servers addObject:s];
 
-    [_appDelegate.servers addObject:newServer];
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];
 
-    // Select the new row
-    NSInteger row = [_outlineView rowForItem:newServer];
+    NSInteger row = [_outlineView rowForItem:s];
     if (row >= 0) {
         [_outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
                   byExtendingSelection:NO];
@@ -450,40 +460,42 @@
     }
 }
 
-- (IBAction)removeServer:(id)sender {
+- (void)removeServer {
     if (!_selectedServer) return;
     [_appDelegate.servers removeObject:_selectedServer];
-    [self clearDetail];
+    [self showPlaceholder];
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];
     [self saveToFile];
 }
 
+// MARK: - Add category
+
 - (IBAction)addCategory:(id)sender {
-    // Sheet-style prompt
     NSAlert *alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"New Category Name:"];
+    alert.messageText = @"New Category";
     [alert addButtonWithTitle:@"Add"];
     [alert addButtonWithTitle:@"Cancel"];
 
-    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
-    [input setPlaceholderString:@"e.g. PRODUCTION"];
-    [alert setAccessoryView:input];
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 22)];
+    input.placeholderString = @"e.g. PRODUCTION";
+    input.font = [NSFont systemFontOfSize:13];
+    alert.accessoryView = input;
+    [alert.window makeFirstResponder:input];
 
-    if ([alert runModal] == NSAlertFirstButtonReturn) {
-        NSString *catName = [[input stringValue]
-            stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        if (catName.length == 0) return;
-        if ([_appDelegate.categories containsObject:catName]) return;
-        [_appDelegate.categories addObject:catName];
-        [_categoryPopup addItemWithTitle:catName];
-        [_outlineView reloadData];
-        [_outlineView expandItem:nil expandChildren:YES];
-        [self saveToFile];
-    }
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+    NSString *name = [input.stringValue stringByTrimmingCharactersInSet:
+                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!name.length || [_appDelegate.categories containsObject:name.uppercaseString]) return;
+
+    [_appDelegate.categories addObject:name.uppercaseString];
+    [_outlineView reloadData];
+    [_outlineView expandItem:nil expandChildren:YES];
+    [self saveToFile];
 }
 
-// MARK: - Save / Delete
+// MARK: - Save server
 
 - (IBAction)saveServer:(id)sender {
     if (!_selectedServer) return;
@@ -492,23 +504,22 @@
     _selectedServer[@"hostname"] = _hostnameField.stringValue;
     _selectedServer[@"user"]     = _userField.stringValue;
 
-    NSInteger port = [_portField.stringValue integerValue];
-    if (port > 0)
+    NSInteger port = _portField.stringValue.integerValue;
+    if (port > 0 && port != 22)
         _selectedServer[@"port"] = @(port);
     else
         [_selectedServer removeObjectForKey:@"port"];
 
-    NSString *selectedKey = [_keyPopup titleOfSelectedItem];
-    if ([selectedKey isEqualToString:@"None"] || selectedKey.length == 0)
+    NSString *selKey = [_keyPopup titleOfSelectedItem];
+    if (!selKey || [selKey isEqualToString:@"None"])
         [_selectedServer removeObjectForKey:@"identity_file"];
     else
-        _selectedServer[@"identity_file"] = [[@"~/.ssh/" stringByAppendingString:selectedKey]
-                                              stringByExpandingTildeInPath];
+        _selectedServer[@"identity_file"] = [@"~/.ssh/" stringByAppendingString:selKey];
 
     _selectedServer[@"category"] = [_categoryPopup titleOfSelectedItem] ?: @"";
 
     NSString *term = [_terminalPopup titleOfSelectedItem];
-    if ([term isEqualToString:@"Default (from settings)"] || term.length == 0)
+    if (!term || [term isEqualToString:@"Default (from settings)"])
         [_selectedServer removeObjectForKey:@"terminal"];
     else
         _selectedServer[@"terminal"] = term;
@@ -516,45 +527,47 @@
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];
 
-    // Re-select the saved server
     NSInteger row = [_outlineView rowForItem:_selectedServer];
     if (row >= 0)
         [_outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
                   byExtendingSelection:NO];
-
     [self saveToFile];
 }
 
+// MARK: - Delete server
+
 - (IBAction)deleteServer:(id)sender {
     if (!_selectedServer) return;
-    NSAlert *confirm = [[NSAlert alloc] init];
-    [confirm setMessageText:@"Delete this server?"];
-    [confirm setInformativeText:[NSString stringWithFormat:@"\"%@\" will be removed from your address book.",
-                                  _selectedServer[@"name"] ?: _selectedServer[@"hostname"]]];
-    [confirm addButtonWithTitle:@"Delete"];
-    [confirm addButtonWithTitle:@"Cancel"];
-    if ([confirm runModal] == NSAlertFirstButtonReturn) {
-        [_appDelegate.servers removeObject:_selectedServer];
-        [self clearDetail];
-        [_outlineView reloadData];
-        [_outlineView expandItem:nil expandChildren:YES];
-        [self saveToFile];
-    }
+
+    NSAlert *a = [[NSAlert alloc] init];
+    a.messageText     = @"Delete this server?";
+    a.informativeText = [NSString stringWithFormat:@"\"%@\" will be permanently removed.",
+                         _selectedServer[@"name"] ?: _selectedServer[@"hostname"] ?: @"This server"];
+    [a addButtonWithTitle:@"Delete"];
+    [a addButtonWithTitle:@"Cancel"];
+    a.buttons.firstObject.hasDestructiveAction = YES;
+
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+
+    [_appDelegate.servers removeObject:_selectedServer];
+    [self showPlaceholder];
+    [_outlineView reloadData];
+    [_outlineView expandItem:nil expandChildren:YES];
+    [self saveToFile];
 }
 
-// MARK: - Persist to JSON
+// MARK: - Persist
 
 - (void)saveToFile {
     NSString *path = _appDelegate.configFilePath;
     NSData *existing = [NSData dataWithContentsOfFile:path];
-    id json = existing ? [NSJSONSerialization JSONObjectWithData:existing
-                                                         options:NSJSONReadingMutableContainers
-                                                           error:nil] : nil;
-    NSMutableDictionary *root = json ? [json mutableCopy] : [NSMutableDictionary dictionary];
-
+    id parsed = existing ? [NSJSONSerialization JSONObjectWithData:existing
+                                                           options:NSJSONReadingMutableContainers
+                                                             error:nil] : nil;
+    NSMutableDictionary *root = parsed ? [parsed mutableCopy] : [NSMutableDictionary dictionary];
     root[@"categories"] = _appDelegate.categories;
     root[@"servers"]    = _appDelegate.servers;
-    [root removeObjectForKey:@"hosts"]; // remove legacy key if present
+    [root removeObjectForKey:@"hosts"];
 
     NSData *out = [NSJSONSerialization dataWithJSONObject:root
                                                   options:NSJSONWritingPrettyPrinted
