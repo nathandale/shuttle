@@ -70,6 +70,9 @@
 - (void)loadMenu;
 - (IBAction)showManager:(id)sender;
 
+// Returns array of {name, identifier, bundleID} dicts for installed terminal apps
+- (NSArray<NSDictionary *> *)installedTerminals;
+
 - (void)menuWillOpen:(NSMenu *)menu;
 
 @end

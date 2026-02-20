@@ -425,6 +425,38 @@
     }
 }
 
+// MARK: - Terminal Detection
+
+- (NSArray<NSDictionary *> *)installedTerminals {
+    // Ordered list of known terminal apps: {display name, JSON identifier, bundle ID}
+    NSArray *candidates = @[
+        @{@"name": @"Terminal",   @"id": @"terminal",   @"bundle": @"com.apple.Terminal"},
+        @{@"name": @"iTerm2",     @"id": @"iterm",      @"bundle": @"com.googlecode.iterm2"},
+        @{@"name": @"Ghostty",    @"id": @"ghostty",    @"bundle": @"com.mitchellh.ghostty"},
+        @{@"name": @"Alacritty",  @"id": @"alacritty",  @"bundle": @"io.alacritty"},
+        @{@"name": @"kitty",      @"id": @"kitty",      @"bundle": @"net.kovidgoyal.kitty"},
+        @{@"name": @"Warp",       @"id": @"warp",       @"bundle": @"dev.warp.Warp-Stable"},
+        @{@"name": @"Hyper",      @"id": @"hyper",      @"bundle": @"co.zeit.hyper"},
+        @{@"name": @"Rio",        @"id": @"rio",         @"bundle": @"com.raphaelamorim.rio"},
+    ];
+
+    NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+    NSMutableArray *found = [NSMutableArray array];
+    for (NSDictionary *t in candidates) {
+        NSURL *url = [ws URLForApplicationWithBundleIdentifier:t[@"bundle"]];
+        if (url) [found addObject:t];
+    }
+    return found;
+}
+
+// Returns the main executable path for a terminal given its bundle ID
+- (NSString *)executableForBundleID:(NSString *)bundleID {
+    NSURL *appURL = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:bundleID];
+    if (!appURL) return nil;
+    NSBundle *bundle = [NSBundle bundleWithURL:appURL];
+    return bundle.executablePath;
+}
+
 // MARK: - Public Accessors
 
 - (NSMutableArray *)servers        { return servers; }
@@ -859,17 +891,16 @@
                          : (terminalPref.length > 0 ? terminalPref : @"terminal");
 
     NSTask *task = [[NSTask alloc] init];
+    NSError *error = nil;
 
-    if ([terminal isEqualToString:@"ghostty"]) {
-        [task setLaunchPath:@"/Applications/Ghostty.app/Contents/MacOS/ghostty"];
-        [task setArguments:@[@"-e", sshCmd]];
-    } else if ([terminal hasPrefix:@"iterm"]) {
+    if ([terminal isEqualToString:@"iterm"]) {
+        NSString *script = [NSString stringWithFormat:
+            @"tell application \"iTerm\" to create window with default profile command \"%@\"", sshCmd];
         [task setLaunchPath:@"/usr/bin/osascript"];
-        [task setArguments:@[@"-e", [NSString stringWithFormat:
-            @"tell application \"iTerm\" to create window with default profile command \"%@\"", sshCmd]]];
-    } else {
-        // Activate Terminal first so its startup window exists, then run in that
-        // window — prevents a second window from appearing when Terminal wasn't open.
+        [task setArguments:@[@"-e", script]];
+
+    } else if ([terminal isEqualToString:@"terminal"]) {
+        // Activate first so the startup window exists, then run inside it.
         NSString *script = [NSString stringWithFormat:
             @"tell application \"Terminal\"\n"
             @"    activate\n"
@@ -882,13 +913,54 @@
             sshCmd, sshCmd];
         [task setLaunchPath:@"/usr/bin/osascript"];
         [task setArguments:@[@"-e", script]];
+
+    } else {
+        // For all other terminals, find the binary via Launch Services and
+        // pass the command with -e (works for Ghostty, Alacritty, kitty, etc.)
+        NSDictionary *bundleMap = @{
+            @"ghostty":   @"com.mitchellh.ghostty",
+            @"alacritty": @"io.alacritty",
+            @"kitty":     @"net.kovidgoyal.kitty",
+            @"warp":      @"dev.warp.Warp-Stable",
+            @"hyper":     @"co.zeit.hyper",
+            @"rio":       @"com.raphaelamorim.rio",
+        };
+        NSString *bundleID = bundleMap[terminal];
+        NSString *binary   = bundleID ? [self executableForBundleID:bundleID] : nil;
+
+        if (binary) {
+            [task setLaunchPath:binary];
+            // Warp uses a URL scheme; others accept -e <cmd>
+            if ([terminal isEqualToString:@"warp"]) {
+                NSString *encoded = [sshCmd stringByAddingPercentEncodingWithAllowedCharacters:
+                                     [NSCharacterSet URLQueryAllowedCharacterSet]];
+                NSURL *url = [NSURL URLWithString:
+                              [NSString stringWithFormat:@"warp://action/new_tab?command=%@", encoded]];
+                [[NSWorkspace sharedWorkspace] openURL:url];
+                return;
+            }
+            [task setArguments:@[@"-e", sshCmd]];
+        } else {
+            // Unknown or not found — fall back to Terminal.app
+            NSString *script = [NSString stringWithFormat:
+                @"tell application \"Terminal\"\n"
+                @"    activate\n"
+                @"    if (count windows) = 0 then\n"
+                @"        do script \"%@\"\n"
+                @"    else\n"
+                @"        do script \"%@\" in front window\n"
+                @"    end if\n"
+                @"end tell",
+                sshCmd, sshCmd];
+            [task setLaunchPath:@"/usr/bin/osascript"];
+            [task setArguments:@[@"-e", script]];
+        }
     }
 
-    NSError *error = nil;
     [task launchAndReturnError:&error];
     if (error) {
         [self throwError:[NSString stringWithFormat:@"Failed to launch terminal: %@", error.localizedDescription]
-          additionalInfo:[NSString stringWithFormat:@"Check that \"%@\" is installed and your shuttle.json terminal setting is correct.", terminal]
+          additionalInfo:[NSString stringWithFormat:@"Could not open \"%@\". Check that it is installed.", terminal]
       continueOnErrorOption:NO];
     }
 }

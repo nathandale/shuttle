@@ -218,9 +218,8 @@ static const CGFloat kColSpacing    = 8.0;
     _categoryPopup.font = [NSFont systemFontOfSize:13];
 
     _terminalPopup = [[NSPopUpButton alloc] init];
-    [_terminalPopup addItemsWithTitles:@[@"Default (from settings)",
-                                         @"terminal", @"iterm", @"ghostty"]];
     _terminalPopup.font = [NSFont systemFontOfSize:13];
+    [self rebuildTerminalPopup];
 
     // Grid: two columns — label | control
     NSGridView *grid = [NSGridView gridViewWithViews:@[
@@ -376,6 +375,22 @@ static const CGFloat kColSpacing    = 8.0;
 
 // MARK: - Show / hide form
 
+- (void)rebuildTerminalPopup {
+    NSString *current = [_terminalPopup titleOfSelectedItem];
+    [_terminalPopup removeAllItems];
+    [_terminalPopup addItemWithTitle:@"Default (from settings)"];
+    for (NSDictionary *t in [_appDelegate installedTerminals]) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:t[@"name"] action:nil keyEquivalent:@""];
+        item.representedObject = t[@"id"]; // store the JSON identifier
+        [_terminalPopup.menu addItem:item];
+    }
+    // Restore previous selection if still available
+    if (current && [_terminalPopup itemWithTitle:current])
+        [_terminalPopup selectItemWithTitle:current];
+    else
+        [_terminalPopup selectItemAtIndex:0];
+}
+
 - (void)showPlaceholder {
     _selectedServer = nil;
     [self layoutFormInPane];
@@ -418,11 +433,20 @@ static const CGFloat kColSpacing    = 8.0;
     NSString *cat = _selectedServer[@"category"] ?: @"";
     if ([_categoryPopup itemWithTitle:cat]) [_categoryPopup selectItemWithTitle:cat];
 
+    [self rebuildTerminalPopup];
     NSString *term = _selectedServer[@"terminal"] ?: @"";
-    if (term.length && [_terminalPopup itemWithTitle:term])
-        [_terminalPopup selectItemWithTitle:term];
-    else
-        [_terminalPopup selectItemAtIndex:0];
+    // Match by stored identifier (representedObject on each item)
+    BOOL matched = NO;
+    if (term.length) {
+        for (NSMenuItem *item in _terminalPopup.itemArray) {
+            if ([item.representedObject isEqualToString:term]) {
+                [_terminalPopup selectItem:item];
+                matched = YES;
+                break;
+            }
+        }
+    }
+    if (!matched) [_terminalPopup selectItemAtIndex:0];
 
     [self layoutFormInPane];
     _placeholderLabel.hidden = YES;
@@ -518,11 +542,12 @@ static const CGFloat kColSpacing    = 8.0;
 
     _selectedServer[@"category"] = [_categoryPopup titleOfSelectedItem] ?: @"";
 
-    NSString *term = [_terminalPopup titleOfSelectedItem];
-    if (!term || [term isEqualToString:@"Default (from settings)"])
+    NSMenuItem *termItem = [_terminalPopup selectedItem];
+    NSString *termID = termItem.representedObject; // the JSON identifier e.g. "ghostty"
+    if (!termID || termID.length == 0)
         [_selectedServer removeObjectForKey:@"terminal"];
     else
-        _selectedServer[@"terminal"] = term;
+        _selectedServer[@"terminal"] = termID;
 
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];
