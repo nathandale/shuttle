@@ -31,6 +31,7 @@
 @property (nonatomic, strong) NSPopUpButton         *keyPopup;
 @property (nonatomic, strong) NSPopUpButton         *categoryPopup;
 @property (nonatomic, strong) NSPopUpButton         *terminalPopup;
+@property (nonatomic, strong) NSTextField           *initialDirField;
 @property (nonatomic, strong) NSButton              *saveBtn;
 @property (nonatomic, strong) NSButton              *deleteBtn;
 
@@ -221,15 +222,18 @@ static const CGFloat kColSpacing    = 8.0;
     _terminalPopup.font = [NSFont systemFontOfSize:13];
     [self rebuildTerminalPopup];
 
+    _initialDirField = fld(@"e.g. ~/bin  (optional)");
+
     // Grid: two columns — label | control
     NSGridView *grid = [NSGridView gridViewWithViews:@[
-        @[lbl(@"Name"),     _nameField],
-        @[lbl(@"Hostname"), _hostnameField],
-        @[lbl(@"User"),     _userField],
-        @[lbl(@"Port"),     _portField],
-        @[lbl(@"SSH Key"),  _keyPopup],
-        @[lbl(@"Category"), _categoryPopup],
-        @[lbl(@"Terminal"), _terminalPopup],
+        @[lbl(@"Name"),        _nameField],
+        @[lbl(@"Hostname"),    _hostnameField],
+        @[lbl(@"User"),        _userField],
+        @[lbl(@"Port"),        _portField],
+        @[lbl(@"SSH Key"),     _keyPopup],
+        @[lbl(@"Category"),    _categoryPopup],
+        @[lbl(@"Terminal"),    _terminalPopup],
+        @[lbl(@"Initial Dir"), _initialDirField],
     ]];
     grid.rowSpacing    = kRowSpacing;
     grid.columnSpacing = kColSpacing;
@@ -448,6 +452,8 @@ static const CGFloat kColSpacing    = 8.0;
     }
     if (!matched) [_terminalPopup selectItemAtIndex:0];
 
+    _initialDirField.stringValue = _selectedServer[@"initial_directory"] ?: @"";
+
     [self layoutFormInPane];
     _placeholderLabel.hidden = YES;
     _formContainer.hidden    = NO;
@@ -548,6 +554,13 @@ static const CGFloat kColSpacing    = 8.0;
         [_selectedServer removeObjectForKey:@"terminal"];
     else
         _selectedServer[@"terminal"] = termID;
+
+    NSString *initialDir = [_initialDirField.stringValue stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (initialDir.length > 0)
+        _selectedServer[@"initial_directory"] = initialDir;
+    else
+        [_selectedServer removeObjectForKey:@"initial_directory"];
 
     [_outlineView reloadData];
     [_outlineView expandItem:nil expandChildren:YES];

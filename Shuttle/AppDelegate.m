@@ -498,10 +498,12 @@
     NSInteger port = [server[@"port"] integerValue];
     NSString *user = server[@"user"];
     NSString *host = server[@"hostname"];
+    NSString *dir  = server[@"initial_directory"];
     if (key.length > 0)          [cmd appendFormat:@" -i %@", [key stringByExpandingTildeInPath]];
     if (port > 0 && port != 22)  [cmd appendFormat:@" -p %ld", (long)port];
     if (user.length > 0)         [cmd appendFormat:@" %@@%@", user, host];
     else                         [cmd appendFormat:@" %@", host];
+    if (dir.length > 0)          [cmd appendFormat:@" -t 'cd %@ && exec $SHELL -l'", dir];
     return cmd;
 }
 
