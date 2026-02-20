@@ -464,243 +464,40 @@
 }
 
 - (void) openHost:(NSMenuItem *) sender {
-    //NSLog(@"sender: %@", sender);
-    //NSLog(@"Command: %@",[sender representedObject]);
-    
-    NSString *errorMessage;
-    NSString *errorInfo;
-    
-    
-    //Place the comma delimited string of menu item settings into an array
-    NSArray *objectsFromJSON = [[sender representedObject] componentsSeparatedByString:(@"¬_¬")];
-    
-    //This is our command that will be run in the terminal window
-    NSString *escapedObject;
-    //The theme for the terminal window
-    NSString *terminalTheme;
-    //The title for the terminal window
-    NSString *terminalTitle;
-    //Are commands run in a new tab (default) a new terminal window (new), or in the current tab of the last used window (current).
-    NSString *terminalWindow;
-    
-    escapedObject = [objectsFromJSON objectAtIndex:0];
-    
-    //if terminalTheme is not set then check for a global setting.
-    if( [[objectsFromJSON objectAtIndex:1] isEqualToString:@"(null)"] ){
-        if(themePref == 0) {
-            if( [terminalPref isEqualToString:@"iterm"] ){
-                //we have no global theme and there is no theme in the command settings.
-                //Forcing the Default profile for iTerm and the basic profile for Terminal.app
-                terminalTheme = @"Default";
-            }else{
-                terminalTheme = @"basic";
-            }
-            //We have a global setting using this as the theme.
-        }else {
-            terminalTheme = themePref;
-        }
-        //we have command level theme override the Global default_theme settings.
-    }else{
-        terminalTheme = [objectsFromJSON objectAtIndex:1];
-    }
-    
-    //Check if terminalTitle is null
-    if( [[objectsFromJSON objectAtIndex:2] isEqualToString:@"(null)"]){
-        //setting the empty title to that of the menu item.
-        terminalTitle = [objectsFromJSON objectAtIndex:4];
-    }else{
-        terminalTitle = [objectsFromJSON objectAtIndex:2];
-    }
-    
-    //Check if inTerminal is null if so then use the default settings of open_in
-    if( [[objectsFromJSON objectAtIndex:3] isEqualToString:@"(null)"]){
-        
-        //if open_in is not "tab" or "new" then force the default of "tab".
-        if( ![openInPref isEqualToString:@"tab"] && ![openInPref isEqualToString:@"new"]){
-            openInPref = @"tab";
-        }
-        //open_in was not empty or bad value we are passing the settings.
-        terminalWindow = openInPref;
-    }else{
-        //inTerminal is not null and overrides the default values of open_in
-        terminalWindow = [objectsFromJSON objectAtIndex:3];
-        if( ![terminalWindow isEqualToString:@"new"] && ![terminalWindow isEqualToString:@"current"] && ![terminalWindow isEqualToString:@"tab"] && ![terminalWindow isEqualToString:@"virtual"])
-        {
-            errorMessage = [NSString stringWithFormat:@"%@%@%@ %@",@"'",terminalWindow,@"'", NSLocalizedString(@"is not a valid value for inTerminal. Please fix this in the JSON file",nil)];
-            errorInfo = NSLocalizedString(@"bad \"inTerminal\":\"VALUE\" in the JSON settings",nil);
-            [self throwError:errorMessage additionalInfo:errorInfo continueOnErrorOption:NO];
-        }
-    }
-    
-    //Set Paths to iTerm Stable AppleScripts
-    NSString *iTermStableNewWindow =  [[NSBundle mainBundle] pathForResource:@"iTerm2-stable-new-window" ofType:@"scpt"];
-    NSString *iTermStableCurrentWindow = [[NSBundle mainBundle] pathForResource:@"iTerm2-stable-current-window" ofType:@"scpt"];
-    NSString *iTermStableNewTabDefault = [[NSBundle mainBundle] pathForResource:@"iTerm2-stable-new-tab-default" ofType:@"scpt"];
-    
-    //Set Paths to iTerm Nightly AppleScripts
-    NSString *iTerm2NightlyNewWindow =  [[NSBundle mainBundle] pathForResource:@"iTerm2-nightly-new-window" ofType:@"scpt"];
-    NSString *iTerm2NightlyCurrentWindow = [[NSBundle mainBundle] pathForResource:@"iTerm2-nightly-current-window" ofType:@"scpt"];
-    NSString *iTerm2NightlyNewTabDefault = [[NSBundle mainBundle] pathForResource:@"iTerm2-nightly-new-tab-default" ofType:@"scpt"];
-    
-    //Set Paths to terminalScripts
-    NSString *terminalNewWindow =  [[NSBundle mainBundle] pathForResource:@"terminal-new-window" ofType:@"scpt"];
-    NSString *terminalCurrentWindow = [[NSBundle mainBundle] pathForResource:@"terminal-current-window" ofType:@"scpt"];
-    NSString *terminalNewTabDefault = [[NSBundle mainBundle] pathForResource:@"terminal-new-tab-default" ofType:@"scpt"];
-    
-    //Set Path to virtual with screen AppleScripts
-    NSString *terminalVirtualWithScreen = [[NSBundle mainBundle] pathForResource:@"virtual-with-screen" ofType:@"scpt"];
-    
-    //Set the name of the handler that we are passing parameters too in the apple script
-    NSString *handlerName = @"scriptRun";
-    
-    //script expects the following order: Command, Theme, Title unless its virtual which bypasses the url check and expects Command, Title
-    NSArray *passParameters;
-    NSURL *url;
-    if ( ![terminalWindow isEqualToString:@"virtual"] ) {
-        passParameters = @[escapedObject, terminalTheme, terminalTitle];
-        url = [NSURL URLWithString:escapedObject];
-    }
-    else {
-        passParameters = @[escapedObject, terminalTitle];
-    }
-    // Check if Url
-    if (url)
-        {
-            [[NSWorkspace sharedWorkspace] openURL:url];
-            
-        }
-    //If the JSON file is set to use iTerm
-    else if ( [terminalPref rangeOfString: @"iterm"].location !=NSNotFound ) {
-        
-        //If the JSON prefs for iTermVersion are not stable or nightly throw an error
-        if( ![iTermVersionPref isEqualToString: @"stable"] && ![iTermVersionPref isEqualToString:@"nightly"] ) {
-            
-            if( iTermVersionPref == 0 ) {
-                errorMessage = NSLocalizedString(@"\"iTerm_version\": \"VALUE\", is missing.\n\n\"VALUE\" can be:\n\"stable\" targeting new versions.\n\"nightly\" targeting nightly builds.\n\nPlease fix your shuttle JSON settings.\nSee readme.md on shuttle's github for help.",nil);
-                errorInfo = NSLocalizedString(@"Press Continue to try iTerm stable applescripts.\n              -->(not recommended)<--\nThis could fail if you have another version of iTerm installed.\n\nPlease fix the JSON settings.\nPress Quit to exit shuttle.",nil);
-                [self throwError:errorMessage additionalInfo:errorInfo continueOnErrorOption:YES];
-                iTermVersionPref = @"stable";
-                
-            }else{
-                errorMessage = [NSString stringWithFormat:@"%@%@%@ %@",@"'",iTermVersionPref,@"'", NSLocalizedString(@"is not a valid value for iTerm_version. Please fix this in the JSON file",nil)];
-                errorInfo = NSLocalizedString(@"bad \"iTerm_version\": \"VALUE\" in the JSON settings",nil);
-                [self throwError:errorMessage additionalInfo:errorInfo continueOnErrorOption:NO];
-            }
-        }
-        
-        if( [iTermVersionPref isEqualToString:@"stable"]) {
-            
-            //run the applescript that works with iTerm Stable
-            //if we are running in a new iTerm "Stable" Window
-            if ( [terminalWindow isEqualToString:@"new"] ) {
-                [self runScript:iTermStableNewWindow handler:handlerName parameters:passParameters];
-            }
-            //if we are running in the current iTerm "Stable" Window
-            if ( [terminalWindow isEqualToString:@"current"] ) {
-                [self runScript:iTermStableCurrentWindow handler:handlerName parameters:passParameters];
-            }
-            //we are using the default action of shuttle... The active window in a new tab
-            if ( [terminalWindow isEqualToString:@"tab"] ) {
-                [self runScript:iTermStableNewTabDefault handler:handlerName parameters:passParameters];
-            }
-            //don't spawn a terminal run the command in the background using screen
-            if ( [terminalWindow isEqualToString:@"virtual"] ) {
-                [self runScript:terminalVirtualWithScreen handler:handlerName parameters:passParameters];
-            }
-        }
-        //iTermVersion is not set to "stable" using applescripts Configured for Nightly
-        if( [iTermVersionPref isEqualToString:@"nightly"]) {
-            //if we are running in a new iTerm "Nightly" Window
-            if ( [terminalWindow isEqualToString:@"new"] ) {
-                [self runScript:iTerm2NightlyNewWindow handler:handlerName parameters:passParameters];
-            }
-            //if we are running in the current iTerm "Nightly" Window
-            if ( [terminalWindow isEqualToString:@"current"] ) {
-                [self runScript:iTerm2NightlyCurrentWindow handler:handlerName parameters:passParameters];
-            }
-            //we are using the default action of shuttle... The active window in a new tab
-            if ( [terminalWindow isEqualToString:@"tab"] ) {
-                [self runScript:iTerm2NightlyNewTabDefault handler:handlerName parameters:passParameters];
-            }
-            //don't spawn a terminal run the command in the background using screen
-            if ( [terminalWindow isEqualToString:@"virtual"] ) {
-                [self runScript:terminalVirtualWithScreen handler:handlerName parameters:passParameters];
-            }
-        }
-    }
-    //If JSON settings are set to use Terminal.app
-    else {
-        //if we are running in a new terminal Window
-        if ( [terminalWindow isEqualToString:@"new"] ) {
-            [self runScript:terminalNewWindow handler:handlerName parameters:passParameters];
-        }
-        //if we are running in the current terminal Window
-        if ( [terminalWindow isEqualToString:@"current"] ) {
-            [self runScript:terminalCurrentWindow handler:handlerName parameters:passParameters];
-        }
-        //we are using the default action of shuttle... The active window in a new tab
-        if ( [terminalWindow isEqualToString:@"tab"] ) {
-            [self runScript:terminalNewTabDefault handler:handlerName parameters:passParameters];
-        }
-        //don't spawn a terminal run the command in the background using screen
-        if ( [terminalWindow isEqualToString:@"virtual"] ) {
-            [self runScript:terminalVirtualWithScreen handler:handlerName parameters:passParameters];
-        }
-    }
-}
+    NSArray *objectsFromJSON = [[sender representedObject] componentsSeparatedByString:@"¬_¬"];
+    NSString *sshCmd = [objectsFromJSON objectAtIndex:0];
 
-- (void) runScript:(NSString *)scriptPath handler:(NSString*)handlerName parameters:(NSArray*)parametersInArray {
-    //special thanks to stackoverflow.com/users/316866/leandro for pointing me the right direction.
-    //see http://goo.gl/olcpaX
-    NSAppleScript           * appleScript;
-    NSAppleEventDescriptor  * thisApplication, *containerEvent;
-    NSURL                   * pathURL = [NSURL fileURLWithPath:scriptPath];
-    
-    NSDictionary * appleScriptCreationError = nil;
-    appleScript = [[NSAppleScript alloc] initWithContentsOfURL:pathURL error:&appleScriptCreationError];
-    
-    if (handlerName && [handlerName length])
-    {
-        /* If we have a handlerName (and potentially parameters), we build
-         * an NSAppleEvent to execute the script. */
-        
-        //Get a descriptor
-        int pid = [[NSProcessInfo processInfo] processIdentifier];
-        thisApplication = [NSAppleEventDescriptor descriptorWithDescriptorType:typeKernelProcessID
-                                                                         bytes:&pid
-                                                                        length:sizeof(pid)];
-        
-        //Create the container event
-        
-        //We need these constants from the Carbon OpenScripting framework, but we don't actually need Carbon.framework...
-#define kASAppleScriptSuite 'ascr'
-#define kASSubroutineEvent  'psbr'
-#define keyASSubroutineName 'snam'
-        containerEvent = [NSAppleEventDescriptor appleEventWithEventClass:kASAppleScriptSuite
-                                                                  eventID:kASSubroutineEvent
-                                                         targetDescriptor:thisApplication
-                                                                 returnID:kAutoGenerateReturnID
-                                                            transactionID:kAnyTransactionID];
-        //Set the target handler
-        [containerEvent setParamDescriptor:[NSAppleEventDescriptor descriptorWithString:handlerName]
-                                forKeyword:keyASSubroutineName];
-        
-        //Pass parameters - parameters is expecting an NSArray with only NSString objects
-        if ([parametersInArray count])
-        {
-            
-            NSAppleEventDescriptor  *arguments = [[NSAppleEventDescriptor alloc] initListDescriptor];
-            NSString                *object;
-            
-            for (object in parametersInArray) {
-                [arguments insertDescriptor:[NSAppleEventDescriptor descriptorWithString:object]
-                                    atIndex:([arguments numberOfItems] +1)];
-            }
-            
-            [containerEvent setParamDescriptor:arguments forKeyword:keyDirectObject];
-        }
-        //Execute the event
-        [appleScript executeAppleEvent:containerEvent error:nil];
+    // If it looks like a URL, open it in the browser
+    NSURL *url = [NSURL URLWithString:sshCmd];
+    if (url && url.scheme && ![url.scheme isEqualToString:@"ssh"]) {
+        [[NSWorkspace sharedWorkspace] openURL:url];
+        return;
+    }
+
+    // Resolve terminal preference; default to "terminal" (native Terminal.app)
+    NSString *terminal = ([terminalPref length] > 0) ? terminalPref : @"terminal";
+
+    NSTask *task = [[NSTask alloc] init];
+
+    if ([terminal isEqualToString:@"ghostty"]) {
+        [task setLaunchPath:@"/Applications/Ghostty.app/Contents/MacOS/ghostty"];
+        [task setArguments:@[@"-e", sshCmd]];
+    } else if ([terminal hasPrefix:@"iterm"]) {
+        [task setLaunchPath:@"/usr/bin/osascript"];
+        [task setArguments:@[@"-e", [NSString stringWithFormat:
+            @"tell application \"iTerm\" to create window with default profile command \"%@\"", sshCmd]]];
+    } else {
+        [task setLaunchPath:@"/usr/bin/osascript"];
+        [task setArguments:@[@"-e", [NSString stringWithFormat:
+            @"tell application \"Terminal\" to do script \"%@\"", sshCmd]]];
+    }
+
+    NSError *error = nil;
+    [task launchAndReturnError:&error];
+    if (error) {
+        [self throwError:[NSString stringWithFormat:@"Failed to launch terminal: %@", error.localizedDescription]
+          additionalInfo:[NSString stringWithFormat:@"Check that \"%@\" is installed and your shuttle.json terminal setting is correct.", terminal]
+      continueOnErrorOption:NO];
     }
 }
 
