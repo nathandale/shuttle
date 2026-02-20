@@ -689,18 +689,34 @@
                 return lastA < lastB ? NSOrderedAscending : lastA > lastB ? NSOrderedDescending : NSOrderedSame;
             }];
             for (NSDictionary *host in sorted) {
-                NSString *hostname = host[@"hostname"];
-                NSString *ip       = host[@"ip"];
-                // SSH target: prefer hostname (works for .local and FQDN), fall back to IP
+                NSString *hostname  = host[@"hostname"];
+                NSString *ip        = host[@"ip"];
                 NSString *sshTarget = (hostname.length > 0) ? hostname : ip;
-                // Menu label: "hostname (ip)" when we have both and they differ, else just the target
-                NSString *label = sshTarget;
+                NSString *label     = sshTarget;
                 if (ip.length > 0 && ![hostname isEqualToString:ip])
                     label = [NSString stringWithFormat:@"%@ (%@)", hostname, ip];
+
+                // Top-level item is the host label; it gets a submenu
+                NSMenuItem *hostItem = [[NSMenuItem alloc] initWithTitle:label action:nil keyEquivalent:@""];
+                NSMenu *hostMenu = [[NSMenu alloc] init];
+
+                // Connect
                 NSString *cmd    = [NSString stringWithFormat:@"ssh %@", sshTarget];
                 NSString *repObj = [NSString stringWithFormat:@"%@¬_¬(null)¬_¬(null)¬_¬(null)¬_¬%@", cmd, label];
-                NSMenuItem *item = [lanSubMenu addItemWithTitle:label action:@selector(openHost:) keyEquivalent:@""];
-                [item setRepresentedObject:repObj];
+                NSMenuItem *connectItem = [[NSMenuItem alloc] initWithTitle:@"Connect" action:@selector(openHost:) keyEquivalent:@""];
+                [connectItem setRepresentedObject:repObj];
+                [hostMenu addItem:connectItem];
+
+                // Save to Address Book
+                NSMenuItem *saveItem = [[NSMenuItem alloc] initWithTitle:@"Save to Address Book…"
+                                                                  action:@selector(saveLanHostToAddressBook:)
+                                                           keyEquivalent:@""];
+                [saveItem setRepresentedObject:@{@"hostname": sshTarget, @"ip": ip ?: @""}];
+                [saveItem setTarget:self];
+                [hostMenu addItem:saveItem];
+
+                [hostItem setSubmenu:hostMenu];
+                [lanSubMenu addItem:hostItem];
             }
         }
     }
@@ -722,6 +738,67 @@
 
 - (IBAction)scanNow:(id)sender {
     [self scanLAN];
+}
+
+- (IBAction)saveLanHostToAddressBook:(NSMenuItem *)sender {
+    NSDictionary *host = sender.representedObject;
+    NSString *detectedHost = host[@"hostname"] ?: host[@"ip"] ?: @"";
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText     = @"Save to Address Book";
+    alert.informativeText = [NSString stringWithFormat:@"Host: %@", detectedHost];
+    [alert addButtonWithTitle:@"Save"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    // Accessory view: name field + category popup stacked vertically
+    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 56)];
+
+    NSTextField *nameField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 30, 260, 22)];
+    nameField.placeholderString = @"Display name (optional)";
+    nameField.stringValue       = detectedHost;
+    nameField.font              = [NSFont systemFontOfSize:13];
+    [accessory addSubview:nameField];
+
+    NSPopUpButton *catPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 260, 26) pullsDown:NO];
+    if (categories.count > 0)
+        [catPopup addItemsWithTitles:categories];
+    else
+        [catPopup addItemWithTitle:@"LOCAL SERVERS"];
+    [accessory addSubview:catPopup];
+
+    alert.accessoryView = accessory;
+    [alert.window makeFirstResponder:nameField];
+
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+    NSString *name = [nameField.stringValue stringByTrimmingCharactersInSet:
+                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!name.length) name = detectedHost;
+    NSString *category = [catPopup titleOfSelectedItem] ?: @"LOCAL SERVERS";
+
+    // Ensure category exists
+    if (![categories containsObject:category])
+        [categories addObject:category];
+
+    NSMutableDictionary *newServer = [@{
+        @"name":     name,
+        @"hostname": detectedHost,
+        @"category": category
+    } mutableCopy];
+    [servers addObject:newServer];
+
+    // Persist and refresh
+    NSData *existing = [NSData dataWithContentsOfFile:shuttleConfigFile];
+    id parsed = existing ? [NSJSONSerialization JSONObjectWithData:existing
+                                                           options:NSJSONReadingMutableContainers
+                                                             error:nil] : nil;
+    NSMutableDictionary *root = parsed ? [parsed mutableCopy] : [NSMutableDictionary dictionary];
+    root[@"categories"] = categories;
+    root[@"servers"]    = servers;
+    [root removeObjectForKey:@"hosts"];
+    NSData *out = [NSJSONSerialization dataWithJSONObject:root options:NSJSONWritingPrettyPrinted error:nil];
+    [out writeToFile:shuttleConfigFile atomically:YES];
+    [self loadMenu];
 }
 
 // MARK: -
