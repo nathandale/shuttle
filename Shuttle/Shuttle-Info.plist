@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3.0</string>
+	<string>1.3.3</string>
 	<key>CFBundleVersion</key>
-	<string>1.3.0</string>
+	<string>1.3.3</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
@@ -29,7 +29,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Shuttle needs Automation privileges in Security &amp; Privacy to run applescripts</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2016 Trevor Fitzgerald. All rights reserved.</string>
+	<string>© 2016 Trevor Fitzgerald · Fork by Nathan Dale</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
