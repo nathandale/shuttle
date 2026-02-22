@@ -943,8 +943,25 @@
             : nil;
 
         if (appURL) {
+            // Run the terminal binary directly via NSTask so that single-instance
+            // apps (e.g. Ghostty) use their IPC to open a new window in the existing
+            // instance rather than spawning a new process (and a new Dock icon).
+            NSString *execPath = [self executableForBundleID:bundleID];
+            if (execPath) {
+                NSTask *execTask = [[NSTask alloc] init];
+                [execTask setLaunchPath:execPath];
+                [execTask setArguments:@[@"-e", @"sh", @"-c", sshCmd]];
+                NSError *execError = nil;
+                [execTask launchAndReturnError:&execError];
+                if (execError) {
+                    [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, execError.localizedDescription]
+                      additionalInfo:@"Check that the terminal app is installed."
+                  continueOnErrorOption:NO];
+                }
+                return;
+            }
+            // Fallback: executable not found, activate via NSWorkspace
             NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
-            config.createsNewApplicationInstance = YES; // always open a new window, even if already running
             config.arguments = @[@"-e", @"sh", @"-c", sshCmd];
             [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
                                                   configuration:config
