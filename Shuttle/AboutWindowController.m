@@ -65,7 +65,7 @@ NSDictionary *plistDict;
     [appCopyright setStringValue:applicationCopyright];
 
     //Set the repository link.
-    [appRepository setStringValue:applicationHomepage];
+    [appRepository setTitle:applicationHomepage];
     
 }
 

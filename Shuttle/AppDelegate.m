@@ -949,23 +949,19 @@
             : nil;
 
         if (appURL) {
-            // Use NSWorkspace to open the app — avoids the "App Management" privacy
-            // prompt that NSTask triggers when accessing another app's internal binary.
-            // This also ensures the app is treated as a single instance in the Dock.
-            NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
-            config.arguments = @[@"-e", @"sh", @"-c", sshCmd];
-
-            [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
-                                                  configuration:config
-                                              completionHandler:^(NSRunningApplication *app, NSError *err) {
-                if (err) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, err.localizedDescription]
-                          additionalInfo:@"Check that the terminal app is installed."
-                      continueOnErrorOption:NO];
-                    });
-                }
-            }];
+            // Use /usr/bin/open to launch the app with arguments.
+            // This avoids the "App Management" privacy prompt and correctly
+            // opens new windows in existing instances for terminals like Ghostty.
+            NSTask *openTask = [[NSTask alloc] init];
+            [openTask setLaunchPath:@"/usr/bin/open"];
+            [openTask setArguments:@[@"-b", bundleID, @"--args", @"-e", @"sh", @"-c", sshCmd]];
+            NSError *execError = nil;
+            [openTask launchAndReturnError:&execError];
+            if (execError) {
+                [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, execError.localizedDescription]
+                  additionalInfo:@"Check that the terminal app is installed."
+              continueOnErrorOption:NO];
+            }
             return;
         } else {
             // Unknown terminal — fall back to Terminal.app via AppleScript

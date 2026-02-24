@@ -59,15 +59,17 @@
                             <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                     </textField>
-                    <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="soF-wq-5hG">
-                        <rect key="frame" x="108" y="54" width="240" height="14"/>
+                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="soF-wq-5hG">
+                        <rect key="frame" x="112" y="54" width="330" height="20"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
-                        <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" sendsActionOnEndEditing="YES" title="Fork by Nathan Dale" id="uUM-88-32s">
+                        <buttonCell key="cell" type="bevel" title="https://github.com/nathandale/shuttle" bezelStyle="rounded" alignment="left" imageScaling="proportionallyDown" inset="2" id="uUM-88-32s">
+                            <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system" size="10"/>
-                            <color key="textColor" name="secondaryLabelColor" catalog="System" colorSpace="catalog"/>
-                            <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
-                        </textFieldCell>
-                    </textField>
+                        </buttonCell>
+                        <connections>
+                            <action selector="btnHomepage:" target="-2" id="btn-homepage-action"/>
+                        </connections>
+                    </button>
                 </subviews>
             </view>
             <connections>

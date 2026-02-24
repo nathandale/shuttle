@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4.0</string>
+	<string>1.4.1</string>
 	<key>CFBundleVersion</key>
-	<string>1.4.0</string>
+	<string>1.4.1</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
@@ -29,7 +29,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Shuttle needs Automation privileges in Security &amp; Privacy to run applescripts</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 Nathan Dale · github.com/nathandale/shuttle</string>
+	<string>© 2016 Trevor Fitzgerald</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

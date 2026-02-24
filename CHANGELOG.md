@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-02-24
+### Fixed
+- **Terminal Multiple Windows**: Fixed a bug where subsequent connection requests failed to open new windows in terminals like Ghostty. Now uses `/usr/bin/open` to correctly handle IPC/instance communication.
+- **Copyright Attribution**: Removed "Nathan Dale" from the copyright as requested; reverted to original author Trevor Fitzgerald.
+- **About Window**: Made the GitHub repository link clickable.
+
 ## [1.4.0] - 2026-02-24
 ### Added
 - **Major Rewrite**: Rebuilt for modern macOS (12+) as a Universal Binary (arm64 + x86_64).
