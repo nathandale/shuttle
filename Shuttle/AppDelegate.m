@@ -949,16 +949,28 @@
             : nil;
 
         if (appURL) {
-            // Run the terminal binary via NSAppleScript executing a shell script.
-            // This bypasses the "App Management" privacy prompt and correctly
-            // opens new windows in existing instances for terminals like Ghostty.
+            if ([terminal isEqualToString:@"ghostty"]) {
+                // Ghostty: use open -n so each call triggers a new launch event,
+                // ensuring Ghostty receives the command arguments every time.
+                // open -b without -n only passes --args on first launch; subsequent
+                // calls just activate the existing window and ignore the args.
+                NSTask *task = [[NSTask alloc] init];
+                task.launchPath = @"/usr/bin/open";
+                task.arguments = @[@"-n", @"-b", @"com.mitchellh.ghostty",
+                                   @"--args", @"--", @"sh", @"-c", sshCmd];
+                task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+                task.standardError  = [NSFileHandle fileHandleWithNullDevice];
+                [task launchAndReturnError:nil];
+                return;
+            }
+            // Alacritty, kitty, Hyper, Rio, etc.: run the terminal binary via
+            // AppleScript do shell script with -e to open a new window.
             NSString *execPath = [self executableForBundleID:bundleID];
             if (execPath) {
-                NSString *args = [terminal isEqualToString:@"ghostty"] ? @"+open -e" : @"-e";
                 NSString *scriptSource = [NSString stringWithFormat:
-                    @"do shell script \"'%@' %@ sh -c '%@' > /dev/null 2>&1 &\"",
-                    execPath, args, [sshCmd stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\\\\\""]];
-                
+                    @"do shell script \"'%@' -e sh -c '%@' > /dev/null 2>&1 &\"",
+                    execPath, [sshCmd stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\\\\\""]];
+
                 NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
                 NSDictionary *errInfo = nil;
                 [appleScript executeAndReturnError:&errInfo];
