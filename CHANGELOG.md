@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-02-24
+### Changed
+- **About Window**: Added "Fork by Nathan Dale" attribution as requested.
+
 ## [1.4.2] - 2026-02-24
 ### Fixed
 - **Terminal Multiple Windows**: Robust fix for terminals like Ghostty where subsequent connection requests previously did nothing. Now uses `NSAppleScript` to call the terminal binary with `+open`, correctly triggering new windows in existing instances.
