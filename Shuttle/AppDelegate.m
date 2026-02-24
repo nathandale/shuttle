@@ -950,64 +950,31 @@
             : nil;
 
         if (appURL) {
-            if ([terminal isEqualToString:@"ghostty"]) {
-                // Ghostty's CLI only accepts --key=value args, so we write a
-                // temp script and pass its path as --command=<path>.
-                //
-                // We invoke the ghostty binary via AppleScript `do shell script`
-                // rather than NSTask directly.  NSTask spawning another app's
-                // binary triggers the macOS App Management TCC prompt against
-                // Shuttle and can't be permanently dismissed.  `do shell script`
-                // runs through the AppleScript runtime (user's shell context),
-                // which avoids that prompt entirely — the same reason all other
-                // terminals in this block use this approach.
-                //
-                // Running the binary (not `open -b`) means Ghostty's IPC kicks
-                // in when it's already running: the binary finds the socket,
-                // tells the existing process to open a new window with --command=,
-                // then exits.  When Ghostty isn't running it just launches fresh.
-                NSString *scriptPath = [NSString stringWithFormat:
-                    @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
-                NSString *scriptContent = [NSString stringWithFormat:
-                    @"#!/bin/sh\nexec %@\n", sshCmd];
-                [scriptContent writeToFile:scriptPath atomically:YES
-                                  encoding:NSUTF8StringEncoding error:nil];
-                chmod([scriptPath fileSystemRepresentation], 0700);
-
-                NSString *execPath = [self executableForBundleID:bundleID];
-                if (execPath) {
-                    NSString *src = [NSString stringWithFormat:
-                        @"do shell script \"'%@' --command='%@' > /dev/null 2>&1 &\"",
-                        execPath, scriptPath];
-                    NSAppleScript *as = [[NSAppleScript alloc] initWithSource:src];
-                    NSDictionary *errInfo = nil;
-                    [as executeAndReturnError:&errInfo];
-                    if (errInfo) {
-                        [self throwError:[NSString stringWithFormat:@"Failed to launch Ghostty: %@",
-                                          errInfo[NSAppleScriptErrorMessage]]
-                            additionalInfo:@"Check that Ghostty is installed."
-                        continueOnErrorOption:NO];
-                    }
-                    return;
-                }
-                // Fallback: binary path lookup failed, fresh launch only
-                NSTask *task = [[NSTask alloc] init];
-                task.launchPath = @"/usr/bin/open";
-                task.arguments = @[@"-b", @"com.mitchellh.ghostty", @"--args",
-                                   [NSString stringWithFormat:@"--command=%@", scriptPath]];
-                task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
-                task.standardError  = [NSFileHandle fileHandleWithNullDevice];
-                [task launchAndReturnError:nil];
-                return;
-            }
-            // Alacritty, kitty, Hyper, Rio, etc.: run the terminal binary via
-            // AppleScript do shell script with -e to open a new window.
             NSString *execPath = [self executableForBundleID:bundleID];
             if (execPath) {
-                NSString *scriptSource = [NSString stringWithFormat:
-                    @"do shell script \"'%@' -e sh -c '%@' > /dev/null 2>&1 &\"",
-                    execPath, [sshCmd stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\\\\\""]];
+                // Ghostty rejects bare words as CLI args (e.g. "-e", "sh", "-c")
+                // and requires --key=value syntax.  Write a tiny temp script so
+                // the full SSH command can be passed as a single --command= value.
+                // All other terminals use -e directly.
+                NSString *launchArg;
+                if ([terminal isEqualToString:@"ghostty"]) {
+                    NSString *scriptPath = [NSString stringWithFormat:
+                        @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
+                    NSString *scriptContent = [NSString stringWithFormat:
+                        @"#!/bin/sh\nexec %@\n", sshCmd];
+                    [scriptContent writeToFile:scriptPath atomically:YES
+                                      encoding:NSUTF8StringEncoding error:nil];
+                    chmod([scriptPath fileSystemRepresentation], 0700);
+                    launchArg = [NSString stringWithFormat:@"--command=%@", scriptPath];
+                } else {
+                    launchArg = [NSString stringWithFormat:@"-e sh -c '%@'",
+                        [sshCmd stringByReplacingOccurrencesOfString:@"'"
+                                                          withString:@"'\\''"]];
+                }
 
+                NSString *scriptSource = [NSString stringWithFormat:
+                    @"do shell script \"'%@' %@ > /dev/null 2>&1 &\"",
+                    execPath, launchArg];
                 NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
                 NSDictionary *errInfo = nil;
                 [appleScript executeAndReturnError:&errInfo];
