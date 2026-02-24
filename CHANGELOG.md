@@ -4,16 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-- The ability to open multiple, or same command(s) off one menu item. https://github.com/fitztrev/shuttle/issues/236
-- The ability to add a second json.config file 
-- The ability to add ```[---]``` in the name of a command to add a line seperator 
-- Adding a new apple script which will allow running commands in the background with screen
-- @philippetev Changes to iTerm applescripts to fix issues with settings in iTerm's Preferences/General
-- French translations by @anivon
-- @anivon localize Error parsing config message is JSON is invalid 
-- @blackadmin version typos in about window. 
-- @ChrisMoriarty add the ability to set the terminal window position and size
+## [1.4.0] - 2026-02-24
+### Added
+- **Major Rewrite**: Rebuilt for modern macOS (12+) as a Universal Binary (arm64 + x86_64).
+- **SSH Manager**: New native split-view window to manage servers and categories without editing JSON manually.
+- **LAN Scanner**: Subnet scanner (GCD-based) and Bonjour/mDNS discovery for local SSH hosts.
+- **Modern Terminal Support**: Native support for Ghostty, Alacritty, kitty, Warp, Rio, and Hyper.
+- **Improved Terminal Launching**: 
+  - Fixed "App Management" privacy prompts by using `NSAppleScript` instead of `osascript` sub-processes.
+  - Improved grouping in the Dock for Ghostty and other third-party terminals using `NSWorkspace`.
+- **Per-Server Settings**: Ability to override the terminal and specify an initial directory on a per-host basis.
+
+### Changed
+- Migrated configuration to a flat `servers` + `categories` JSON structure for easier management.
+- Updated "About" window with new repository links and attribution.
 
 ## [1.2.9] - 2016-10-18
 ### Added
