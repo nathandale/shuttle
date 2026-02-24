@@ -892,18 +892,19 @@
                          ? termOverride
                          : (terminalPref.length > 0 ? terminalPref : @"terminal");
 
-    NSTask *task = [[NSTask alloc] init];
-    NSError *error = nil;
-
     if ([terminal isEqualToString:@"iterm"]) {
-        NSString *script = [NSString stringWithFormat:
+        NSString *scriptSource = [NSString stringWithFormat:
             @"tell application \"iTerm\" to create window with default profile command \"%@\"", sshCmd];
-        [task setLaunchPath:@"/usr/bin/osascript"];
-        [task setArguments:@[@"-e", script]];
+        NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
+        NSDictionary *errorInfo = nil;
+        [appleScript executeAndReturnError:&errorInfo];
+        if (errorInfo) {
+            [self throwError:@"iTerm launch failed" additionalInfo:errorInfo[NSAppleScriptErrorMessage] continueOnErrorOption:NO];
+        }
+        return;
 
     } else if ([terminal isEqualToString:@"terminal"]) {
-        // Activate first so the startup window exists, then run inside it.
-        NSString *script = [NSString stringWithFormat:
+        NSString *scriptSource = [NSString stringWithFormat:
             @"tell application \"Terminal\"\n"
             @"    activate\n"
             @"    if (count windows) = 0 then\n"
@@ -913,8 +914,13 @@
             @"    end if\n"
             @"end tell",
             sshCmd, sshCmd];
-        [task setLaunchPath:@"/usr/bin/osascript"];
-        [task setArguments:@[@"-e", script]];
+        NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
+        NSDictionary *errorInfo = nil;
+        [appleScript executeAndReturnError:&errorInfo];
+        if (errorInfo) {
+            [self throwError:@"Terminal launch failed" additionalInfo:errorInfo[NSAppleScriptErrorMessage] continueOnErrorOption:NO];
+        }
+        return;
 
     } else if ([terminal isEqualToString:@"warp"]) {
         // Warp uses a URL scheme rather than CLI args
@@ -943,26 +949,12 @@
             : nil;
 
         if (appURL) {
-            // Run the terminal binary directly via NSTask so that single-instance
-            // apps (e.g. Ghostty) use their IPC to open a new window in the existing
-            // instance rather than spawning a new process (and a new Dock icon).
-            NSString *execPath = [self executableForBundleID:bundleID];
-            if (execPath) {
-                NSTask *execTask = [[NSTask alloc] init];
-                [execTask setLaunchPath:execPath];
-                [execTask setArguments:@[@"-e", @"sh", @"-c", sshCmd]];
-                NSError *execError = nil;
-                [execTask launchAndReturnError:&execError];
-                if (execError) {
-                    [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, execError.localizedDescription]
-                      additionalInfo:@"Check that the terminal app is installed."
-                  continueOnErrorOption:NO];
-                }
-                return;
-            }
-            // Fallback: executable not found, activate via NSWorkspace
+            // Use NSWorkspace to open the app — avoids the "App Management" privacy
+            // prompt that NSTask triggers when accessing another app's internal binary.
+            // This also ensures the app is treated as a single instance in the Dock.
             NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
             config.arguments = @[@"-e", @"sh", @"-c", sshCmd];
+
             [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
                                                   configuration:config
                                               completionHandler:^(NSRunningApplication *app, NSError *err) {
@@ -974,11 +966,10 @@
                     });
                 }
             }];
-            return; // completionHandler handles errors async
+            return;
         } else {
-            // Unknown terminal — fall back to Terminal.app
-            [task setLaunchPath:@"/usr/bin/osascript"];
-            NSString *script = [NSString stringWithFormat:
+            // Unknown terminal — fall back to Terminal.app via AppleScript
+            NSString *scriptSource = [NSString stringWithFormat:
                 @"tell application \"Terminal\"\n"
                 @"    activate\n"
                 @"    if (count windows) = 0 then\n"
@@ -988,15 +979,14 @@
                 @"    end if\n"
                 @"end tell",
                 sshCmd, sshCmd];
-            [task setArguments:@[@"-e", script]];
+            NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
+            NSDictionary *errorInfo = nil;
+            [appleScript executeAndReturnError:&errorInfo];
+            if (errorInfo) {
+                [self throwError:@"Terminal launch failed" additionalInfo:errorInfo[NSAppleScriptErrorMessage] continueOnErrorOption:NO];
+            }
+            return;
         }
-    }
-
-    [task launchAndReturnError:&error];
-    if (error) {
-        [self throwError:[NSString stringWithFormat:@"Failed to launch terminal: %@", error.localizedDescription]
-          additionalInfo:[NSString stringWithFormat:@"Could not open \"%@\". Check that it is installed.", terminal]
-      continueOnErrorOption:NO];
     }
 }
 

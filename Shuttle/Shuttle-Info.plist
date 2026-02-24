@@ -29,12 +29,12 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Shuttle needs Automation privileges in Security &amp; Privacy to run applescripts</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2016 Trevor Fitzgerald · Fork by Nathan Dale</string>
+	<string>© 2026 Nathan Dale · github.com/nathandale/shuttle</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>Product Homepage</key>
-	<string>http://fitztrev.github.io/shuttle/</string>
+	<string>https://github.com/nathandale/shuttle</string>
 </dict>
 </plist>

@@ -15,6 +15,7 @@
 @property (strong) IBOutlet NSTextField *appName;
 @property (strong) IBOutlet NSTextField *appVersion;
 @property (strong) IBOutlet NSTextField *appCopyright;
+@property (strong) IBOutlet NSTextField *appRepository;
 
 - (IBAction)btnHomepage:(id)sender;
 

@@ -17,6 +17,7 @@
 @synthesize appName;
 @synthesize appVersion;
 @synthesize appCopyright;
+@synthesize appRepository;
 
 NSDictionary *plistDict;
 
@@ -44,6 +45,8 @@ NSDictionary *plistDict;
     id applicationVersion = [plistDict objectForKey:@"CFBundleVersion"];
     //Get the copyright.
     id applicationCopyright = [plistDict objectForKey:@"NSHumanReadableCopyright"];
+    //Get the homepage.
+    id applicationHomepage = [plistDict objectForKey:@"Product Homepage"];
     
     //Build the string for the windows title.
     NSString *aboutTitle = [NSString stringWithFormat:@"%@%@", NSLocalizedString(@"About ",nil), applicationName];
@@ -60,6 +63,9 @@ NSDictionary *plistDict;
     //Make the copyright font smaller.
     [appCopyright setFont:[NSFont systemFontOfSize:10]];
     [appCopyright setStringValue:applicationCopyright];
+
+    //Set the repository link.
+    [appRepository setStringValue:applicationHomepage];
     
 }
 

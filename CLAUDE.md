@@ -66,7 +66,7 @@ The default config template is at `Shuttle/shuttle.default.json`.
 Terminals are detected at runtime by querying Launch Services for bundle IDs (see `installedTerminals` in `AppDelegate.m`). Launching strategy varies by terminal:
 
 - **Terminal.app, iTerm2**: AppleScript
-- **Ghostty, Alacritty, kitty, Hyper, Rio**: `NSWorkspace openURL` + `sh -c` wrapper
+- **Ghostty, Alacritty, kitty, Hyper, Rio**: `NSWorkspace` (openApplicationAtURL) + `sh -c` wrapper; ensures single-instance grouping in Dock
 - **Warp**: URL scheme (`warp://action/new_tab?command=…`)
 
 Per-server terminal overrides are respected in `openHost:`.

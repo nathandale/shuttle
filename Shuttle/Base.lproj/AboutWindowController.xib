@@ -9,6 +9,7 @@
             <connections>
                 <outlet property="appCopyright" destination="rfT-bT-B7g" id="9uI-a1-vwK"/>
                 <outlet property="appName" destination="APf-vF-1w0" id="N4r-kg-BHK"/>
+                <outlet property="appRepository" destination="soF-wq-5hG" id="NEW-OUTLET-ID"/>
                 <outlet property="appVersion" destination="LTk-GB-fgJ" id="41k-wk-DtW"/>
                 <outlet property="window" destination="F0z-JX-Cv5" id="gIp-Ho-8D9"/>
             </connections>
