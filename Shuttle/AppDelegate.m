@@ -951,15 +951,21 @@
 
         if (appURL) {
             if ([terminal isEqualToString:@"ghostty"]) {
-                // Ghostty only accepts --key=value CLI args; bare words cause
-                // "invalid field" errors. Write a temp script and pass its path
-                // as --command= to avoid all quoting/parsing issues.
+                // Ghostty's CLI only accepts --key=value args, so we write a
+                // temp script and pass its path as --command=<path>.
                 //
-                // Run the ghostty binary directly (not via `open`) so that IPC
-                // works: when Ghostty is already running the binary connects via
-                // its IPC socket and opens a new window with the command in the
-                // existing process. `open -n` drops --args during process
-                // coalescing, which is why subsequent clicks produced blank windows.
+                // We invoke the ghostty binary via AppleScript `do shell script`
+                // rather than NSTask directly.  NSTask spawning another app's
+                // binary triggers the macOS App Management TCC prompt against
+                // Shuttle and can't be permanently dismissed.  `do shell script`
+                // runs through the AppleScript runtime (user's shell context),
+                // which avoids that prompt entirely — the same reason all other
+                // terminals in this block use this approach.
+                //
+                // Running the binary (not `open -b`) means Ghostty's IPC kicks
+                // in when it's already running: the binary finds the socket,
+                // tells the existing process to open a new window with --command=,
+                // then exits.  When Ghostty isn't running it just launches fresh.
                 NSString *scriptPath = [NSString stringWithFormat:
                     @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
                 NSString *scriptContent = [NSString stringWithFormat:
@@ -970,18 +976,24 @@
 
                 NSString *execPath = [self executableForBundleID:bundleID];
                 if (execPath) {
-                    NSTask *task = [[NSTask alloc] init];
-                    task.launchPath = execPath;
-                    task.arguments = @[[NSString stringWithFormat:@"--command=%@", scriptPath]];
-                    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
-                    task.standardError  = [NSFileHandle fileHandleWithNullDevice];
-                    [task launchAndReturnError:nil];
+                    NSString *src = [NSString stringWithFormat:
+                        @"do shell script \"'%@' --command='%@' > /dev/null 2>&1 &\"",
+                        execPath, scriptPath];
+                    NSAppleScript *as = [[NSAppleScript alloc] initWithSource:src];
+                    NSDictionary *errInfo = nil;
+                    [as executeAndReturnError:&errInfo];
+                    if (errInfo) {
+                        [self throwError:[NSString stringWithFormat:@"Failed to launch Ghostty: %@",
+                                          errInfo[NSAppleScriptErrorMessage]]
+                            additionalInfo:@"Check that Ghostty is installed."
+                        continueOnErrorOption:NO];
+                    }
                     return;
                 }
-                // Fallback if binary path lookup fails
+                // Fallback: binary path lookup failed, fresh launch only
                 NSTask *task = [[NSTask alloc] init];
                 task.launchPath = @"/usr/bin/open";
-                task.arguments = @[@"-n", @"-b", @"com.mitchellh.ghostty", @"--args",
+                task.arguments = @[@"-b", @"com.mitchellh.ghostty", @"--args",
                                    [NSString stringWithFormat:@"--command=%@", scriptPath]];
                 task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
                 task.standardError  = [NSFileHandle fileHandleWithNullDevice];
