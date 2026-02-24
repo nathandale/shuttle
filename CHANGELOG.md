@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-02-24
+### Fixed
+- **Terminal Multiple Windows**: Robust fix for terminals like Ghostty where subsequent connection requests previously did nothing. Now uses `NSAppleScript` to call the terminal binary with `+open`, correctly triggering new windows in existing instances.
+- **Privacy**: Bypasses "App Management" privacy prompts by delegating execution to the system script runner.
+- **About Window**: Removed copyright labels entirely and made the GitHub repository link a larger, more accessible clickable button.
+
 ## [1.4.1] - 2026-02-24
 ### Fixed
 - **Terminal Multiple Windows**: Fixed a bug where subsequent connection requests failed to open new windows in terminals like Ghostty. Now uses `/usr/bin/open` to correctly handle IPC/instance communication.

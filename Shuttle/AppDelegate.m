@@ -949,19 +949,31 @@
             : nil;
 
         if (appURL) {
-            // Use /usr/bin/open to launch the app with arguments.
-            // This avoids the "App Management" privacy prompt and correctly
+            // Run the terminal binary via NSAppleScript executing a shell script.
+            // This bypasses the "App Management" privacy prompt and correctly
             // opens new windows in existing instances for terminals like Ghostty.
+            NSString *execPath = [self executableForBundleID:bundleID];
+            if (execPath) {
+                NSString *args = [terminal isEqualToString:@"ghostty"] ? @"+open -e" : @"-e";
+                NSString *scriptSource = [NSString stringWithFormat:
+                    @"do shell script \"'%@' %@ sh -c '%@' > /dev/null 2>&1 &\"",
+                    execPath, args, [sshCmd stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\\\\\""]];
+                
+                NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:scriptSource];
+                NSDictionary *errInfo = nil;
+                [appleScript executeAndReturnError:&errInfo];
+                if (errInfo) {
+                    [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, errInfo[NSAppleScriptErrorMessage]]
+                      additionalInfo:@"Check that the terminal app is installed."
+                  continueOnErrorOption:NO];
+                }
+                return;
+            }
+            // Fallback: executable not found, try open -b (will only work if not already running)
             NSTask *openTask = [[NSTask alloc] init];
             [openTask setLaunchPath:@"/usr/bin/open"];
             [openTask setArguments:@[@"-b", bundleID, @"--args", @"-e", @"sh", @"-c", sshCmd]];
-            NSError *execError = nil;
-            [openTask launchAndReturnError:&execError];
-            if (execError) {
-                [self throwError:[NSString stringWithFormat:@"Failed to launch %@: %@", terminal, execError.localizedDescription]
-                  additionalInfo:@"Check that the terminal app is installed."
-              continueOnErrorOption:NO];
-            }
+            [openTask launchAndReturnError:nil];
             return;
         } else {
             // Unknown terminal — fall back to Terminal.app via AppleScript
