@@ -8,6 +8,7 @@
 #import "ServerManagerWindowController.h"
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -950,14 +951,22 @@
 
         if (appURL) {
             if ([terminal isEqualToString:@"ghostty"]) {
-                // Ghostty: use open -n so each call triggers a new launch event,
-                // ensuring Ghostty receives the command arguments every time.
-                // open -b without -n only passes --args on first launch; subsequent
-                // calls just activate the existing window and ignore the args.
+                // Ghostty only accepts --key=value CLI args; bare words like
+                // "sh", "-c" cause "invalid field" errors. Work around this by
+                // writing a tiny temp script and passing its path as --command=.
+                NSString *scriptPath = [NSString stringWithFormat:
+                    @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
+                NSString *scriptContent = [NSString stringWithFormat:
+                    @"#!/bin/sh\nexec %@\n", sshCmd];
+                [scriptContent writeToFile:scriptPath atomically:YES
+                                  encoding:NSUTF8StringEncoding error:nil];
+                chmod([scriptPath fileSystemRepresentation], 0700);
+                NSString *commandArg = [NSString stringWithFormat:
+                    @"--command=%@", scriptPath];
                 NSTask *task = [[NSTask alloc] init];
                 task.launchPath = @"/usr/bin/open";
                 task.arguments = @[@"-n", @"-b", @"com.mitchellh.ghostty",
-                                   @"--args", @"--", @"sh", @"-c", sshCmd];
+                                   @"--args", commandArg];
                 task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
                 task.standardError  = [NSFileHandle fileHandleWithNullDevice];
                 [task launchAndReturnError:nil];
