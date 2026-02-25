@@ -950,28 +950,46 @@
             : nil;
 
         if (appURL) {
+            if ([terminal isEqualToString:@"ghostty"]) {
+                // Ghostty rejects bare CLI words ("-e", "sh", "-c") and requires
+                // --key=value syntax, so we pass the SSH command via a temp script
+                // as --command=<path>.
+                //
+                // NSWorkspace is the only launch mechanism that avoids the macOS
+                // App Management TCC prompt entirely.  Running the ghostty binary
+                // directly (NSTask or do shell script) triggers TCC because the
+                // binary communicates with the running Ghostty.app via IPC, and
+                // macOS attributes that app-to-app traffic back to Shuttle.
+                // NSWorkspace goes through LaunchServices — no app-to-app
+                // communication, no TCC check.
+                //
+                // createsNewApplicationInstance = YES ensures --command= arguments
+                // are always delivered (Apple docs: arguments are only passed on a
+                // fresh launch or when createsNewApplicationInstance is YES).
+                NSString *scriptPath = [NSString stringWithFormat:
+                    @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
+                NSString *scriptContent = [NSString stringWithFormat:
+                    @"#!/bin/sh\nexec %@\n", sshCmd];
+                [scriptContent writeToFile:scriptPath atomically:YES
+                                  encoding:NSUTF8StringEncoding error:nil];
+                chmod([scriptPath fileSystemRepresentation], 0700);
+
+                NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
+                config.arguments = @[[NSString stringWithFormat:@"--command=%@", scriptPath]];
+                config.createsNewApplicationInstance = YES;
+                [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
+                                                      configuration:config
+                                                  completionHandler:nil];
+                return;
+            }
+
+            // Alacritty, kitty, Hyper, Rio: run the terminal binary via
+            // do shell script with -e to open a new window.
             NSString *execPath = [self executableForBundleID:bundleID];
             if (execPath) {
-                // Ghostty rejects bare words as CLI args (e.g. "-e", "sh", "-c")
-                // and requires --key=value syntax.  Write a tiny temp script so
-                // the full SSH command can be passed as a single --command= value.
-                // All other terminals use -e directly.
-                NSString *launchArg;
-                if ([terminal isEqualToString:@"ghostty"]) {
-                    NSString *scriptPath = [NSString stringWithFormat:
-                        @"/tmp/shuttle_%@.sh", [NSUUID UUID].UUIDString];
-                    NSString *scriptContent = [NSString stringWithFormat:
-                        @"#!/bin/sh\nexec %@\n", sshCmd];
-                    [scriptContent writeToFile:scriptPath atomically:YES
-                                      encoding:NSUTF8StringEncoding error:nil];
-                    chmod([scriptPath fileSystemRepresentation], 0700);
-                    launchArg = [NSString stringWithFormat:@"--command=%@", scriptPath];
-                } else {
-                    launchArg = [NSString stringWithFormat:@"-e sh -c '%@'",
-                        [sshCmd stringByReplacingOccurrencesOfString:@"'"
-                                                          withString:@"'\\''"]];
-                }
-
+                NSString *launchArg = [NSString stringWithFormat:@"-e sh -c '%@'",
+                    [sshCmd stringByReplacingOccurrencesOfString:@"'"
+                                                      withString:@"'\\''"]];
                 NSString *scriptSource = [NSString stringWithFormat:
                     @"do shell script \"'%@' %@ > /dev/null 2>&1 &\"",
                     execPath, launchArg];
@@ -985,7 +1003,7 @@
                 }
                 return;
             }
-            // Fallback: executable not found, try open -b (will only work if not already running)
+            // Fallback: binary not found, try open -b (fresh launch only)
             NSTask *openTask = [[NSTask alloc] init];
             [openTask setLaunchPath:@"/usr/bin/open"];
             [openTask setArguments:@[@"-b", bundleID, @"--args", @"-e", @"sh", @"-c", sshCmd]];
